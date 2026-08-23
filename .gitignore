@@ -1,0 +1,51 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python cache and tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+data/*.db*
+data/*.sqlite*
+
+# Local credentials and tokens
+credentials/
+tokens/
+token.json
+credentials.json
+client_secret*.json
+*.pem
+*.key
+*.p12
+*.pfx
+.streamlit/secrets.toml
+
+# Local Ollama data
+.ollama/
+
+# Future local uploads
+uploads/
+data/uploads/
+
+# Editor and operating system files
+.vscode/
+.idea/
+*.log
+*.tmp
+tmp/
+.DS_Store
+Thumbs.db
