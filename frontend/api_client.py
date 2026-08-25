@@ -77,6 +77,26 @@ def upload_cv(uploaded_file) -> tuple[dict | None, str | None]:
         return None, "CV yüklenirken backend bağlantısı başarısız oldu."
 
 
+def get_cv_analysis() -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(f"{BACKEND_URL}/profile/cv/analysis", timeout=10)
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "CV analiz durumu backend'den alınamadı."
+
+
+def analyze_cv() -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(f"{BACKEND_URL}/profile/cv/analyze", timeout=600)
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "CV analiz edilirken backend bağlantısı başarısız oldu."
+
+
 def list_companies() -> tuple[list[dict] | None, str | None]:
     try:
         response = requests.get(f"{BACKEND_URL}/companies", timeout=5)
@@ -142,7 +162,7 @@ def generate_draft(company_id: int) -> tuple[dict | None, str | None]:
         response = requests.post(
             f"{BACKEND_URL}/drafts/generate",
             json={"company_id": company_id},
-            timeout=140,
+            timeout=260,
         )
         if not response.ok:
             return None, _error_message(response)

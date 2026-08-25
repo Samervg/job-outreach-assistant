@@ -75,3 +75,14 @@ def initialize_database() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cv_analysis (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                cv_file_path TEXT NOT NULL,
+                analysis_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )

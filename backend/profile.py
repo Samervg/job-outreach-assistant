@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,17 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from backend.config import MAX_CV_SIZE_BYTES, MAX_CV_SIZE_MB, PROJECT_ROOT, UPLOAD_DIR
 from backend.database import get_connection
+from backend.services.cv_parser import (
+    CVAnalysis,
+    CVAnalysisError,
+    CVParsingError,
+    analyze_cv_text,
+    extract_pdf_text,
+)
+from backend.services.email_generator import (
+    OllamaModelUnavailableError,
+    OllamaUnavailableError,
+)
 
 
 router = APIRouter(prefix="/profile", tags=["profile"])
@@ -50,6 +62,13 @@ class ProfileResponse(BaseModel):
     cv_original_name: str | None
     created_at: str
     updated_at: str
+
+
+class CVAnalysisResponse(BaseModel):
+    analyzed: bool
+    cv_original_name: str | None
+    analyzed_at: str | None = None
+    analysis: CVAnalysis | None = None
 
 
 def _row_to_profile(row: sqlite3.Row) -> ProfileResponse:
@@ -187,6 +206,7 @@ def upload_or_replace_cv(
                 """,
                 (relative_path, original_name, now),
             )
+            connection.execute("DELETE FROM cv_analysis WHERE id = 1")
             row = connection.execute(
                 "SELECT * FROM user_profile WHERE id = 1"
             ).fetchone()
@@ -206,3 +226,96 @@ def upload_or_replace_cv(
         raise
     finally:
         file.file.close()
+
+
+@router.get("/cv/analysis", response_model=CVAnalysisResponse)
+def get_cv_analysis() -> CVAnalysisResponse:
+    profile = _get_profile_row()
+    if profile is None or not profile["cv_file_path"]:
+        return CVAnalysisResponse(analyzed=False, cv_original_name=None)
+
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM cv_analysis WHERE id = 1"
+        ).fetchone()
+
+    if row is None or row["cv_file_path"] != profile["cv_file_path"]:
+        return CVAnalysisResponse(
+            analyzed=False,
+            cv_original_name=profile["cv_original_name"],
+        )
+
+    try:
+        analysis = CVAnalysis.model_validate(json.loads(row["analysis_json"]))
+    except (ValueError, TypeError):
+        return CVAnalysisResponse(
+            analyzed=False,
+            cv_original_name=profile["cv_original_name"],
+        )
+
+    return CVAnalysisResponse(
+        analyzed=True,
+        cv_original_name=profile["cv_original_name"],
+        analyzed_at=row["updated_at"],
+        analysis=analysis,
+    )
+
+
+@router.post("/cv/analyze", response_model=CVAnalysisResponse)
+def analyze_current_cv() -> CVAnalysisResponse:
+    profile = _get_profile_row()
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="CV analizi için önce profilinizi kaydedin.",
+        )
+    if not profile["cv_file_path"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Analiz edilecek bir CV bulunamadı.",
+        )
+
+    cv_path = _safe_old_cv_path(profile["cv_file_path"])
+    if cv_path is None or not cv_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Yüklenen CV dosyası yerel diskte bulunamadı.",
+        )
+
+    try:
+        text = extract_pdf_text(cv_path)
+        analysis = analyze_cv_text(text)
+    except CVParsingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
+        ) from error
+    except CVAnalysisError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+        ) from error
+    except (OllamaUnavailableError, OllamaModelUnavailableError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
+        ) from error
+
+    now = datetime.now(timezone.utc).isoformat()
+    analysis_json = analysis.model_dump_json()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO cv_analysis (id, cv_file_path, analysis_json, created_at, updated_at)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                cv_file_path = excluded.cv_file_path,
+                analysis_json = excluded.analysis_json,
+                updated_at = excluded.updated_at
+            """,
+            (profile["cv_file_path"], analysis_json, now, now),
+        )
+
+    return CVAnalysisResponse(
+        analyzed=True,
+        cv_original_name=profile["cv_original_name"],
+        analyzed_at=now,
+        analysis=analysis,
+    )

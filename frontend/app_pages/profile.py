@@ -1,6 +1,6 @@
 import streamlit as st
 
-from api_client import get_profile, save_profile, upload_cv
+from api_client import analyze_cv, get_cv_analysis, get_profile, save_profile, upload_cv
 
 
 st.header("Profil")
@@ -11,6 +11,11 @@ if profile_error:
     st.stop()
 
 profile = profile or {}
+cv_analysis_state = None
+if profile.get("cv_file_path"):
+    cv_analysis_state, analysis_state_error = get_cv_analysis()
+    if analysis_state_error:
+        st.warning(analysis_state_error)
 
 with st.form("profile_form"):
     name = st.text_input("Ad soyad", value=profile.get("name", ""))
@@ -32,6 +37,10 @@ with st.form("profile_form"):
     current_cv_name = profile.get("cv_original_name")
     if current_cv_name:
         st.info(f"Yüklü CV: {current_cv_name}")
+        if cv_analysis_state and cv_analysis_state.get("analyzed"):
+            st.success("CV analiz edildi.")
+        else:
+            st.warning("CV henüz analiz edilmedi.")
     else:
         st.info("Henüz bir CV yüklenmedi.")
 
@@ -60,3 +69,47 @@ if submitted:
     else:
         st.success("Profil başarıyla kaydedildi.")
         st.rerun()
+
+if profile.get("cv_file_path"):
+    if st.button("CV'yi analiz et", icon=":material/document_search:"):
+        with st.spinner("CV metni çıkarılıyor ve Ollama ile analiz ediliyor..."):
+            cv_analysis_state, analyze_error = analyze_cv()
+        if analyze_error:
+            st.error(analyze_error)
+        else:
+            st.success("CV analizi kaydedildi.")
+            st.rerun()
+
+    if cv_analysis_state and cv_analysis_state.get("analyzed"):
+        analysis = cv_analysis_state.get("analysis") or {}
+        with st.container(border=True):
+            st.subheader("CV analiz özeti")
+
+            skills = analysis.get("skills") or []
+            st.write("**Beceriler:**", ", ".join(skills) if skills else "Bulunamadı")
+
+            education = analysis.get("education") or []
+            st.write("**Eğitim:**")
+            if education:
+                for item in education:
+                    st.write(f"- {item}")
+            else:
+                st.caption("Eğitim bilgisi bulunamadı.")
+
+            projects = analysis.get("projects") or []
+            st.write("**Projeler:**")
+            if projects:
+                for project in projects:
+                    description = project.get("description") or "Açıklama yok"
+                    st.write(f"- {project['name']}: {description}")
+            else:
+                st.caption("Proje bilgisi bulunamadı.")
+
+            experience = analysis.get("experience") or []
+            st.write("**Deneyim:**")
+            if experience:
+                for item in experience:
+                    organization = item.get("organization") or "Kurum belirtilmemiş"
+                    st.write(f"- {item['title']} — {organization} ({item['type']})")
+            else:
+                st.caption("Profesyonel veya staj deneyimi bulunamadı.")

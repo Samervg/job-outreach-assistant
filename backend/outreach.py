@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -6,6 +7,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from backend.config import OLLAMA_MODEL
 from backend.database import get_connection
+from backend.services.cv_parser import (
+    CVAnalysis,
+    CVAnalysisError,
+    select_relevant_evidence,
+)
 from backend.services.email_generator import (
     OllamaInvalidResponseError,
     OllamaModelUnavailableError,
@@ -133,8 +139,38 @@ def generate_draft(request: DraftGenerateRequest) -> DraftResponse:
             detail="Profilde ad, hedef pozisyon ve profesyonel özet bulunmalıdır.",
         )
 
+    relevant_evidence = None
+    with get_connection() as connection:
+        analysis_row = connection.execute(
+            "SELECT * FROM cv_analysis WHERE id = 1"
+        ).fetchone()
+
+    if (
+        analysis_row is not None
+        and profile.get("cv_file_path")
+        and analysis_row["cv_file_path"] == profile["cv_file_path"]
+    ):
+        try:
+            analysis = CVAnalysis.model_validate(
+                json.loads(analysis_row["analysis_json"])
+            )
+            relevant_evidence = select_relevant_evidence(
+                analysis,
+                company["target_position"],
+                profile["professional_summary"],
+            ).model_dump()
+        except (ValueError, TypeError, CVAnalysisError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Kaydedilmiş CV analizi kullanılamadı. CV'yi yeniden analiz edin.",
+            ) from error
+        except (OllamaUnavailableError, OllamaModelUnavailableError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
+            ) from error
+
     try:
-        generated = generate_email(profile, company)
+        generated = generate_email(profile, company, relevant_evidence)
     except OllamaModelUnavailableError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
