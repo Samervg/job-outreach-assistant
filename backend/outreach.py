@@ -50,6 +50,9 @@ class DraftResponse(BaseModel):
     subject: str
     body: str
     status: str
+    sent_at: str | None
+    gmail_message_id: str | None
+    error_message: str | None
     created_at: str
     updated_at: str
 
@@ -236,7 +239,7 @@ def update_draft(draft_id: int, draft: DraftUpdate) -> DraftResponse:
             """
             UPDATE outreach
             SET subject = ?, body = ?, updated_at = ?
-            WHERE id = ? AND status = 'draft'
+            WHERE id = ? AND status IN ('draft', 'failed')
             """,
             (draft.subject, draft.body, now, draft_id),
         )

@@ -3,15 +3,43 @@ import streamlit as st
 from api_client import (
     generate_draft,
     get_draft,
+    get_gmail_status,
     get_ollama_status,
+    get_profile,
     list_companies,
     list_drafts,
+    send_draft,
+    start_gmail_oauth,
     update_draft,
 )
 
 
 st.header("Yeni başvuru")
-st.info("Bu yalnızca bir taslaktır. Henüz e-posta gönderilmez.")
+gmail_status, gmail_error = get_gmail_status()
+if gmail_error:
+    st.warning(gmail_error)
+    gmail_connected = False
+elif gmail_status["connected"]:
+    gmail_connected = True
+    gmail_account = gmail_status.get("email") or "Bağlı Gmail hesabı"
+    st.success(f"Gmail bağlı: {gmail_account}")
+else:
+    gmail_connected = False
+    st.warning(gmail_status["message"])
+    if st.button("Gmail hesabını bağla", icon=":material/link:"):
+        auth_result, auth_error = start_gmail_oauth()
+        if auth_error:
+            st.error(auth_error)
+        else:
+            st.session_state["gmail_authorization_url"] = auth_result[
+                "authorization_url"
+            ]
+    if st.session_state.get("gmail_authorization_url"):
+        st.link_button(
+            "Google ile yetkilendirmeyi aç",
+            st.session_state["gmail_authorization_url"],
+        )
+        st.caption("Yetkilendirme tamamlandıktan sonra bu sayfayı yenileyin.")
 
 ollama_status, ollama_error = get_ollama_status()
 if ollama_error:
@@ -104,3 +132,53 @@ if save_submitted:
     else:
         st.success("Düzenlenen taslak kaydedildi.")
         st.rerun()
+
+st.subheader("Son kontrol ve gönderim")
+profile, profile_error = get_profile()
+if profile_error:
+    st.warning(profile_error)
+
+with st.container(border=True):
+    st.write(f"**Alıcı:** {draft['recipient_email']}")
+    st.write(f"**Şirket:** {draft['company_name']}")
+    st.write(f"**Pozisyon:** {draft['position']}")
+    st.write(f"**Konu:** {draft['subject']}")
+    st.write("**E-posta metni:**")
+    st.text(draft["body"])
+    st.write(
+        f"**CV eki:** {(profile or {}).get('cv_original_name') or 'Aktif CV yok'}"
+    )
+    st.write(
+        f"**Gönderen Gmail:** "
+        f"{(gmail_status or {}).get('email') or 'Gmail bağlı değil'}"
+    )
+
+if draft["status"] == "sent":
+    st.success(
+        f"Bu e-posta gönderildi. Gmail mesaj kimliği: "
+        f"{draft.get('gmail_message_id') or '-'}"
+    )
+    if draft.get("sent_at"):
+        st.caption(f"Gönderim zamanı (UTC): {draft['sent_at']}")
+else:
+    if draft["status"] == "failed" and draft.get("error_message"):
+        st.error(f"Son gönderim denemesi başarısız: {draft['error_message']}")
+
+    confirmation = st.checkbox(
+        "Alıcıyı, içeriği ve CV ekini kontrol ettim. "
+        "Bu e-postayı göndermek istiyorum.",
+        key=f"send_confirmation_{selected_draft_id}",
+    )
+    if st.button(
+        "E-postayı gönder",
+        type="primary",
+        icon=":material/send:",
+        disabled=not confirmation or not gmail_connected,
+    ):
+        with st.spinner("E-posta Gmail üzerinden gönderiliyor..."):
+            sent_draft, send_error = send_draft(selected_draft_id, True)
+        if send_error:
+            st.error(send_error)
+        else:
+            st.success("E-posta başarıyla gönderildi.")
+            st.rerun()

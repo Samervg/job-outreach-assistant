@@ -5,6 +5,66 @@ from collections.abc import Iterator
 from backend.config import DATABASE_PATH
 
 
+def _create_outreach_table(
+    connection: sqlite3.Connection, table_name: str = "outreach"
+) -> None:
+    if table_name not in {"outreach", "outreach_phase6"}:
+        raise ValueError("Unexpected outreach table name.")
+
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            company_name TEXT NOT NULL,
+            recipient_email TEXT NOT NULL,
+            position TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft', 'sent', 'failed')),
+            sent_at TEXT,
+            gmail_message_id TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _upgrade_outreach_table(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(outreach)")
+    }
+    required_columns = {"sent_at", "gmail_message_id", "error_message"}
+    table_sql_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'outreach'"
+    ).fetchone()
+    table_sql = table_sql_row["sql"] if table_sql_row else ""
+
+    if required_columns.issubset(columns) and "'sent'" in table_sql:
+        return
+
+    connection.execute("DROP TABLE IF EXISTS outreach_phase6")
+    _create_outreach_table(connection, "outreach_phase6")
+    connection.execute(
+        """
+        INSERT INTO outreach_phase6 (
+            id, company_id, company_name, recipient_email, position,
+            subject, body, status, sent_at, gmail_message_id, error_message,
+            created_at, updated_at
+        )
+        SELECT
+            id, company_id, company_name, recipient_email, position,
+            subject, body, status, NULL, NULL, NULL, created_at, updated_at
+        FROM outreach
+        """
+    )
+    connection.execute("DROP TABLE outreach")
+    connection.execute("ALTER TABLE outreach_phase6 RENAME TO outreach")
+
+
 @contextmanager
 def get_connection() -> Iterator[sqlite3.Connection]:
     """Provide one transaction-scoped connection and always close it."""
@@ -59,22 +119,8 @@ def initialize_database() -> None:
             )
             """
         )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS outreach (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_id INTEGER NOT NULL,
-                company_name TEXT NOT NULL,
-                recipient_email TEXT NOT NULL,
-                position TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                body TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'draft' CHECK (status = 'draft'),
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
+        _create_outreach_table(connection)
+        _upgrade_outreach_table(connection)
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS cv_analysis (

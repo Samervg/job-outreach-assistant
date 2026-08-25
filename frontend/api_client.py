@@ -205,3 +205,39 @@ def update_draft(
         return response.json(), None
     except (requests.RequestException, ValueError):
         return None, "Taslak kaydedilirken backend bağlantısı başarısız oldu."
+
+
+def get_gmail_status() -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(f"{BACKEND_URL}/gmail/status", timeout=10)
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Gmail bağlantı durumu alınamadı."
+
+
+def start_gmail_oauth() -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(f"{BACKEND_URL}/gmail/auth/start", timeout=10)
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Gmail yetkilendirmesi başlatılamadı."
+
+
+def send_draft(
+    draft_id: int, confirm_send: bool
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/drafts/{draft_id}/send",
+            json={"confirm_send": confirm_send},
+            timeout=60,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "E-posta gönderilirken backend bağlantısı başarısız oldu."
