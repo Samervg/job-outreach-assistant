@@ -142,7 +142,7 @@ def generate_draft(company_id: int) -> tuple[dict | None, str | None]:
         response = requests.post(
             f"{BACKEND_URL}/drafts/generate",
             json={"company_id": company_id},
-            timeout=200,
+            timeout=140,
         )
         if not response.ok:
             return None, _error_message(response)

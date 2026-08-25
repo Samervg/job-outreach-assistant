@@ -52,36 +52,63 @@ def ensure_configured_model() -> list[str]:
 
 
 def _build_prompt(profile: dict, company: dict) -> str:
-    return f"""
-Aşağıdaki bilgilerle kısa, profesyonel ve doğal bir iş başvurusu e-postası yaz.
+    candidate_name = str(profile["name"]).strip().title()
+    company_name = " ".join(
+        word.upper() if word.lower() == "ai" else word.capitalize()
+        for word in str(company["name"]).strip().split()
+    )
 
-Kesin kurallar:
-- Yalnızca aşağıda verilen bilgileri kullan.
-- Deneyim, teknoloji, beceri, şirket projesi, ürün, çalışan veya başarı uydurma.
-- Kullanıcının profesyonel deneyimi olduğunu, profil açıkça söylemiyorsa iddia etme.
-- Profil sınırlı deneyim gösteriyorsa dürüst ve junior seviyesine uygun bir dil kullan.
-- Şirket hakkında araştırma yapıldığını veya bilinmeyen bir bilgiye sahip olunduğunu iddia etme.
-- Sahte bir alıcı adı kullanma; genel ve doğal bir selamlama kullan.
-- Hedef pozisyonu açıkça belirt.
-- LinkedIn ve GitHub bağlantıları varsa metne doğal biçimde ekle.
-- Abartılı heyecan, klişe yapay zekâ ifadeleri ve gereksiz moda sözcüklerden kaçın.
-- E-posta gövdesini nispeten kısa tut.
-- Profesyonel özetin dili belirginsa aynı dilde yaz; değilse Türkçe yaz.
+    return f"""
+Kısa ve doğal bir iş başvurusu e-postası yaz. Profesyonel özet Türkçe olduğu için
+e-posta da Türkçe olmalı.
+
+E-posta iskeleti:
+1. Selamlama tam olarak: "Merhaba {company_name} Ekibi,"
+2. İlk paragraf tek cümle olsun: {company['target_position']} pozisyonuna başvurma amacı.
+3. İkinci paragrafta aşağıdaki izinli aday bilgilerinden yalnızca 1-2 tanesini doğal
+   biçimde kullan. Projelerin içeriğini, türünü veya kullanım alanını detaylandırma.
+4. Son paragraf şu anlamı sade biçimde versin: "Kariyerimin başında öğrenmeye ve
+   katkı sunmaya istekliyim. Uygun görürseniz görüşmekten memnuniyet duyarım."
+5. Kapanış tam olarak: "İyi çalışmalar,\n{candidate_name}"
+
+Zorunlu kontroller:
+- Gövde selamlama ve kapanış dahil yaklaşık 70-110 kelime, tam 3 kısa paragraf olsun.
+- Kısa konu satırında hedef pozisyon bulunsun.
+- Sade, düzgün, birinci tekil şahıs Türkçesi kullan.
+- Yalnızca verilen aday bilgilerini kullan. Deneyim süresi, profesyonel/üretim
+  deneyimi, yeni teknoloji, başarı, şirket ürünü/faaliyeti/kültürü veya alıcı adı uydurma.
+- Şirket web adresi, şirket hakkında bilgi sahibi olduğun anlamına gelmez.
+- Ham URL, e-posta adresi, "ekipçisi", "kariyerimizi", "destek alabileceğimden eminim",
+  "en kısa sürede dönüş yapacağım" veya adayın dönüş yapacağını vadeden benzer bir
+  ifade ASLA yazma.
+- "İki gerçek nokta", "işimdeki en önemli projeler" gibi talimatı açıklayan ifadeler
+  yazma. Doğrudan adaya ait bilgiyi doğal cümleyle anlat.
+- "Deneyim" kelimesini kullanma; "projeler geliştiriyorum/yaptım" de. Hiçbir somut
+  proje adı, sektör, müşteri, sistem veya kullanım senaryosu ekleme.
+- "Kariyerimiz/kariyerimizin" değil, yalnızca "kariyerim/kariyerimin" de.
+- Teknolojileri listeleme; bir odak seç.
+- Abartılı heyecan gösterme ve aynı bilgiyi tekrarlama.
 
 Kullanıcı bilgileri:
-- Ad: {profile['name']}
+- Ad: {candidate_name}
 - Genel hedef iş unvanı: {profile['target_job_title']}
 - Profesyonel özet: {profile['professional_summary']}
-- LinkedIn: {profile.get('linkedin_url') or 'Sağlanmadı'}
-- GitHub: {profile.get('github_url') or 'Sağlanmadı'}
+- LinkedIn/GitHub mevcut mu: {'Evet' if profile.get('linkedin_url') or profile.get('github_url') else 'Hayır'}
+
+İzinli aday bilgileri (bunların dışına çıkma):
+- Bilgisayar mühendisliği mezunu.
+- AI/ML alanıyla ilgileniyor.
+- Python ile makine öğrenmesi projeleri geliştiriyor.
+- RAG/LLM tabanlı uygulamalar geliştiriyor.
+- Backend ve full-stack projeler yaptı.
+- AI/ML Engineer ve AI odaklı software engineering pozisyonlarına yöneliyor.
 
 Şirket ve başvuru bilgileri:
-- Şirket: {company['name']}
-- Web sitesi: {company.get('website') or 'Sağlanmadı'}
-- İletişim e-postası: {company['contact_email']}
+- Şirket: {company_name}
 - Hedef pozisyon: {company['target_position']}
 
-Yalnızca istenen JSON şemasına uygun konu ve e-posta gövdesi üret.
+Yalnızca istenen JSON şemasına uygun konu ve e-posta gövdesi üret. Açıklama veya
+Markdown ekleme.
 """.strip()
 
 
@@ -103,20 +130,23 @@ def generate_email(profile: dict, company: dict) -> GeneratedEmail:
             {
                 "role": "system",
                 "content": (
-                    "Sen dürüst ve kısa iş başvurusu e-postaları hazırlayan bir asistansın. "
-                    "Verilmeyen hiçbir bilgiyi uydurma."
+                    "Sen doğal, kısa ve dürüst iş başvurusu e-postaları hazırlayan bir "
+                    "editörsün. Yalnızca verilen aday ve şirket verilerine dayan; hiçbir "
+                    "deneyim veya şirket bilgisi uydurma. Çıktıyı belirtilen JSON "
+                    "şemasında ver."
                 ),
             },
             {"role": "user", "content": _build_prompt(profile, company)},
         ],
         "stream": False,
+        "think": False,
         "format": response_schema,
         "options": {"temperature": 0.2},
     }
 
     try:
         response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=180
+            f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=120
         )
         response.raise_for_status()
         content = response.json().get("message", {}).get("content", "")
