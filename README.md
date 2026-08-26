@@ -1,4 +1,4 @@
-# Job Outreach Assistant — Phase 7
+# Job Outreach Assistant — Phase 8
 
 Yerelde çalışan, tek kullanıcıya yönelik iş başvurusu iletişim asistanı MVP'si.
 
@@ -13,6 +13,7 @@ Mevcut özellikler:
 - Açık kullanıcı onayından sonra tek taslağı aktif PDF CV ile gönderme
 - Başvuru geçmişini durumlara göre görüntüleme ve filtreleme
 - Gönderim sonrası manuel durum takibi ve özel notlar
+- Şirket web sitesinden güvenli, düzenlenebilir şirket önizlemesi oluşturma
 - Güvenli SQLite bağlantı ve transaction yönetimi
 
 Toplu gönderim, otomatik takip, zamanlama, scraping, şirket keşfi ve gelen kutusu

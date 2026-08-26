@@ -1,10 +1,13 @@
 import sqlite3
+import re
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator
 
 from backend.database import get_connection
+from backend.services.company_importer import CompanyImportError, import_company_preview
 
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -42,6 +45,34 @@ class CompanyResponse(BaseModel):
     target_position: str
     created_at: str
     updated_at: str
+
+
+class CompanyImportRequest(BaseModel):
+    website: str = Field(min_length=1, max_length=2000)
+
+
+class OpenPositionPreview(BaseModel):
+    title: str
+    url: str
+
+
+class CompanyImportPreview(BaseModel):
+    website: str
+    company_name: str | None
+    contact_email: str | None
+    career_page_url: str | None
+    contact_page_url: str | None
+    open_positions: list[OpenPositionPreview]
+    source_pages: list[str]
+
+
+class DuplicateCheckRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    website: str | None = Field(default=None, max_length=2000)
+
+
+class DuplicateCheckResponse(BaseModel):
+    duplicates: list[CompanyResponse]
 
 
 def _row_to_company(row: sqlite3.Row) -> CompanyResponse:
@@ -98,6 +129,51 @@ def list_companies() -> list[CompanyResponse]:
             "SELECT * FROM companies ORDER BY name COLLATE NOCASE, id"
         ).fetchall()
     return [_row_to_company(row) for row in rows]
+
+
+def _normalized_name(value: str) -> str:
+    return re.sub(r"[^\w]+", "", value.casefold())
+
+
+def _website_domain(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    return hostname[4:] if hostname.startswith("www.") else hostname or None
+
+
+@router.post("/import-preview", response_model=CompanyImportPreview)
+def import_preview(request: CompanyImportRequest) -> CompanyImportPreview:
+    try:
+        preview = import_company_preview(request.website)
+    except CompanyImportError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+        ) from error
+    return CompanyImportPreview(**preview)
+
+
+@router.post("/duplicate-check", response_model=DuplicateCheckResponse)
+def check_company_duplicate(
+    request: DuplicateCheckRequest,
+) -> DuplicateCheckResponse:
+    requested_name = _normalized_name(request.name)
+    requested_domain = _website_domain(request.website)
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM companies ORDER BY name COLLATE NOCASE, id"
+        ).fetchall()
+    duplicates = [
+        _row_to_company(row)
+        for row in rows
+        if _normalized_name(row["name"]) == requested_name
+        or (
+            requested_domain is not None
+            and _website_domain(row["website"]) == requested_domain
+        )
+    ]
+    return DuplicateCheckResponse(duplicates=duplicates)
 
 
 @router.get("/{company_id}", response_model=CompanyResponse)

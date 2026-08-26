@@ -147,6 +147,36 @@ def delete_company(company_id: int) -> str | None:
         return "Şirket silinirken backend bağlantısı başarısız oldu."
 
 
+def import_company_preview(website: str) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/companies/import-preview",
+            json={"website": website},
+            timeout=45,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Web sitesi taranırken backend bağlantısı başarısız oldu."
+
+
+def check_company_duplicates(
+    name: str, website: str | None
+) -> tuple[list[dict] | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/companies/duplicate-check",
+            json={"name": name, "website": website},
+            timeout=10,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json().get("duplicates", []), None
+    except (requests.RequestException, ValueError):
+        return None, "Benzer şirket kontrolü yapılamadı."
+
+
 def get_ollama_status() -> tuple[dict | None, str | None]:
     try:
         response = requests.get(f"{BACKEND_URL}/ollama/status", timeout=10)
