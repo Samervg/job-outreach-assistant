@@ -8,7 +8,7 @@ from backend.config import DATABASE_PATH
 def _create_outreach_table(
     connection: sqlite3.Connection, table_name: str = "outreach"
 ) -> None:
-    if table_name not in {"outreach", "outreach_phase6"}:
+    if table_name not in {"outreach", "outreach_upgrade"}:
         raise ValueError("Unexpected outreach table name.")
 
     connection.execute(
@@ -22,10 +22,14 @@ def _create_outreach_table(
             subject TEXT NOT NULL,
             body TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'draft'
-                CHECK (status IN ('draft', 'sent', 'failed')),
+                CHECK (status IN (
+                    'draft', 'sent', 'failed', 'replied',
+                    'interview', 'rejected', 'offer'
+                )),
             sent_at TEXT,
             gmail_message_id TEXT,
             error_message TEXT,
+            notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -37,32 +41,40 @@ def _upgrade_outreach_table(connection: sqlite3.Connection) -> None:
     columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(outreach)")
     }
-    required_columns = {"sent_at", "gmail_message_id", "error_message"}
+    required_columns = {"sent_at", "gmail_message_id", "error_message", "notes"}
     table_sql_row = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'outreach'"
     ).fetchone()
     table_sql = table_sql_row["sql"] if table_sql_row else ""
 
-    if required_columns.issubset(columns) and "'sent'" in table_sql:
+    required_statuses = {"'replied'", "'interview'", "'rejected'", "'offer'"}
+    if required_columns.issubset(columns) and all(
+        status in table_sql for status in required_statuses
+    ):
         return
 
-    connection.execute("DROP TABLE IF EXISTS outreach_phase6")
-    _create_outreach_table(connection, "outreach_phase6")
+    connection.execute("DROP TABLE IF EXISTS outreach_upgrade")
+    _create_outreach_table(connection, "outreach_upgrade")
+    sent_at = "sent_at" if "sent_at" in columns else "NULL"
+    gmail_message_id = "gmail_message_id" if "gmail_message_id" in columns else "NULL"
+    error_message = "error_message" if "error_message" in columns else "NULL"
+    notes = "notes" if "notes" in columns else "''"
     connection.execute(
-        """
-        INSERT INTO outreach_phase6 (
+        f"""
+        INSERT INTO outreach_upgrade (
             id, company_id, company_name, recipient_email, position,
             subject, body, status, sent_at, gmail_message_id, error_message,
-            created_at, updated_at
+            notes, created_at, updated_at
         )
         SELECT
             id, company_id, company_name, recipient_email, position,
-            subject, body, status, NULL, NULL, NULL, created_at, updated_at
+            subject, body, status, {sent_at}, {gmail_message_id}, {error_message},
+            {notes}, created_at, updated_at
         FROM outreach
         """
     )
     connection.execute("DROP TABLE outreach")
-    connection.execute("ALTER TABLE outreach_phase6 RENAME TO outreach")
+    connection.execute("ALTER TABLE outreach_upgrade RENAME TO outreach")
 
 
 @contextmanager

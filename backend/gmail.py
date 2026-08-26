@@ -141,10 +141,10 @@ def send_draft(draft_id: int, request: SendDraftRequest) -> DraftResponse:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Taslak bulunamadı."
             )
-        if draft["status"] == "sent":
+        if draft["status"] not in {"draft", "failed"}:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Bu taslak daha önce gönderildi ve tekrar gönderilemez.",
+                detail="Bu başvuru daha önce gönderildi ve tekrar gönderilemez.",
             )
 
         try:

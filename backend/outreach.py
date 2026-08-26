@@ -53,6 +53,7 @@ class DraftResponse(BaseModel):
     sent_at: str | None
     gmail_message_id: str | None
     error_message: str | None
+    notes: str
     created_at: str
     updated_at: str
 

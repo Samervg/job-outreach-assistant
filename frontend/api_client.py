@@ -241,3 +241,56 @@ def send_draft(
         return response.json(), None
     except (requests.RequestException, ValueError):
         return None, "E-posta gönderilirken backend bağlantısı başarısız oldu."
+
+
+def list_applications(
+    application_status: str = "all",
+) -> tuple[list[dict] | None, str | None]:
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/applications",
+            params={"status": application_status},
+            timeout=10,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Başvurular backend'den alınamadı."
+
+
+def get_application(application_id: int) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/applications/{application_id}", timeout=10
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Başvuru backend'den alınamadı."
+
+
+def update_application(
+    application_id: int,
+    *,
+    application_status: str | None = None,
+    notes: str | None = None,
+) -> tuple[dict | None, str | None]:
+    payload = {}
+    if application_status is not None:
+        payload["status"] = application_status
+    if notes is not None:
+        payload["notes"] = notes
+
+    try:
+        response = requests.patch(
+            f"{BACKEND_URL}/applications/{application_id}",
+            json=payload,
+            timeout=10,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Başvuru güncellenirken backend bağlantısı başarısız oldu."

@@ -1,4 +1,4 @@
-# Job Outreach Assistant — Phase 6
+# Job Outreach Assistant — Phase 7
 
 Yerelde çalışan, tek kullanıcıya yönelik iş başvurusu iletişim asistanı MVP'si.
 
@@ -11,6 +11,8 @@ Mevcut özellikler:
 - Taslakları görüntüleme, düzenleme ve SQLite'a kaydetme
 - Tek bir Gmail hesabını OAuth 2.0 ile bağlama
 - Açık kullanıcı onayından sonra tek taslağı aktif PDF CV ile gönderme
+- Başvuru geçmişini durumlara göre görüntüleme ve filtreleme
+- Gönderim sonrası manuel durum takibi ve özel notlar
 - Güvenli SQLite bağlantı ve transaction yönetimi
 
 Toplu gönderim, otomatik takip, zamanlama, scraping, şirket keşfi ve gelen kutusu

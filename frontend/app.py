@@ -29,6 +29,11 @@ page = st.navigation(
             title="Yeni başvuru",
             icon=":material/edit_note:",
         ),
+        st.Page(
+            "app_pages/applications.py",
+            title="Başvurular",
+            icon=":material/work_history:",
+        ),
     ],
     position="top",
 )
