@@ -63,7 +63,10 @@ Invoke-RestMethod http://127.0.0.1:11434/api/tags
 2. API Library bölümünden Gmail API'yi etkinleştirin.
 3. Google Auth Platform bölümünde uygulama bilgilerini ve OAuth izin ekranını
    yapılandırın. Uygulama test modundaysa gönderecek Gmail hesabını test kullanıcısı
-   olarak ekleyin.
+   olarak ekleyin. **Data Access** bölümüne yalnızca
+   `https://www.googleapis.com/auth/gmail.send`,
+   `https://www.googleapis.com/auth/gmail.readonly`, `openid` ve `email`
+   izinlerini ekleyin.
 4. OAuth Client oluştururken **Web application** türünü seçin. Yetkilendirilmiş
    yönlendirme URI'si olarak tam şu adresi ekleyin:
    `http://127.0.0.1:8000/gmail/auth/callback`
@@ -75,10 +78,13 @@ Invoke-RestMethod http://127.0.0.1:11434/api/tags
 7. FastAPI ve Streamlit'i başlatın. Yeni Başvuru sayfasındaki **Gmail hesabını
    bağla** düğmesine basın, Google onayını tamamlayın ve uygulamaya dönün.
 
-Uygulama Gmail için yalnızca gönderme kapsamını ister; gelen kutusunu okumaz.
-Bağlantılı hesap adresini göstermek için ayrıca standart OpenID/e-posta kimlik
-izinleri kullanılır. İstemci sırrı, erişim/yenileme tokenları ve bağlı hesap bilgisi
-yalnızca yerel `credentials/` klasöründe tutulur ve Git tarafından yok sayılır.
+Uygulama Gmail için gönderme ve salt okunur erişim kapsamlarını ister. Salt okunur
+erişim genel bir gelen kutusu okuyucusu olarak kullanılmaz; yalnızca mevcut bir
+başvurunun kayıtlı Gmail mesajından doğrulanan konuşma, açık kullanıcı isteğiyle
+okunur. Bağlantılı hesap adresini göstermek için ayrıca standart OpenID/e-posta
+kimlik izinleri kullanılır. İstemci sırrı, erişim/yenileme tokenları ve bağlı hesap
+bilgisi yalnızca yerel `credentials/` klasöründe tutulur ve Git tarafından yok
+sayılır.
 
 Yerel callback HTTP kullandığı için `.env.example` içinde
 `ALLOW_INSECURE_OAUTH_LOOPBACK=true` bulunur. Bu ayar OAuthLib'in HTTP istisnasını

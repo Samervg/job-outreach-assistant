@@ -6,6 +6,9 @@ import re
 import secrets
 from dataclasses import dataclass
 from email.message import EmailMessage
+from email.utils import parseaddr
+from html import unescape
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -16,6 +19,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from oauthlib.oauth2 import OAuth2Error
+from bs4 import BeautifulSoup
 
 from backend.config import (
     ALLOW_INSECURE_OAUTH_LOOPBACK,
@@ -28,12 +32,14 @@ from backend.config import (
 
 
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 EMAIL_IDENTITY_SCOPES = {
     "email",
     "https://www.googleapis.com/auth/userinfo.email",
 }
 SCOPES = [
     GMAIL_SEND_SCOPE,
+    GMAIL_READONLY_SCOPE,
     "openid",
     "email",
 ]
@@ -54,12 +60,42 @@ class GmailSendError(Exception):
     pass
 
 
+class GmailReadError(Exception):
+    pass
+
+
 @dataclass
 class GmailConnectionStatus:
     connected: bool
     email: str | None
     credentials_available: bool
     message: str
+
+
+@dataclass
+class GmailSendResult:
+    message_id: str
+    thread_id: str | None
+
+
+@dataclass
+class GmailReplyResult:
+    has_reply: bool
+    reply_count: int
+    latest_reply_at: str | None
+    latest_reply_from: str | None
+    latest_reply_subject: str | None
+    latest_reply_snippet: str | None
+    thread_id: str
+
+
+@dataclass
+class GmailReplyContent:
+    sender: str
+    subject: str | None
+    received_at: str | None
+    body_text: str
+    thread_id: str
 
 
 def _scope_set(scopes) -> set[str]:
@@ -72,6 +108,7 @@ def _has_required_scopes(scopes) -> bool:
     granted = _scope_set(scopes)
     return (
         GMAIL_SEND_SCOPE in granted
+        and GMAIL_READONLY_SCOPE in granted
         and "openid" in granted
         and bool(granted & EMAIL_IDENTITY_SCOPES)
     )
@@ -169,11 +206,16 @@ def get_gmail_status() -> GmailConnectionStatus:
 
     credentials = _load_credentials()
     if credentials is None:
+        reconnect_message = (
+            "Gmail izinleri güncellendi. Hesabı yeniden bağlayın."
+            if GMAIL_TOKEN_PATH.is_file()
+            else "Gmail hesabı henüz bağlı değil."
+        )
         return GmailConnectionStatus(
             connected=False,
             email=None,
             credentials_available=True,
-            message="Gmail hesabı henüz bağlı değil.",
+            message=reconnect_message,
         )
 
     email = _load_account_email() or _fetch_account_email(credentials)
@@ -268,7 +310,7 @@ def complete_oauth(authorization_response: str, returned_state: str) -> str | No
             sorted(callback_scopes),
         )
         raise GmailConfigurationError(
-            "Google gerekli Gmail gönderme iznini vermedi. Google Auth Platform "
+            "Google gerekli Gmail gönderme/okuma iznini vermedi. Google Auth Platform "
             "Data Access ayarını ve izin ekranındaki seçimi kontrol edip yeni bir "
             "bağlantı başlatın."
         )
@@ -295,7 +337,7 @@ def complete_oauth(authorization_response: str, returned_state: str) -> str | No
                 sorted(returned_scopes),
             )
             raise GmailConfigurationError(
-                "Gmail gönderme veya kimlik izinlerinden biri verilmedi. "
+                "Gmail gönderme, salt okunur erişim veya kimlik izinlerinden biri verilmedi. "
                 "Gmail bağlantısını yeniden kurun."
             ) from error
 
@@ -337,7 +379,7 @@ def complete_oauth(authorization_response: str, returned_state: str) -> str | No
             sorted(_scope_set(granted_scopes)),
         )
         raise GmailConfigurationError(
-            "Gmail gönderme izni alınamadı. Gmail bağlantısını yeniden kurun."
+            "Gmail gönderme/okuma izni alınamadı. Gmail bağlantısını yeniden kurun."
         )
 
     _save_credentials(credentials)
@@ -379,7 +421,7 @@ def send_email(
     cv_original_name: str,
     service=None,
     sender_email: str | None = None,
-) -> str:
+) -> GmailSendResult:
     try:
         if service is None:
             credentials = _load_credentials()
@@ -421,4 +463,263 @@ def send_email(
     message_id = str(result.get("id") or "").strip()
     if not message_id:
         raise GmailSendError("Gmail API geçerli bir mesaj kimliği döndürmedi.")
-    return message_id
+    thread_id = str(result.get("threadId") or "").strip() or None
+    return GmailSendResult(message_id=message_id, thread_id=thread_id)
+
+
+def _header(message: dict, name: str) -> str | None:
+    for header in message.get("payload", {}).get("headers", []):
+        if str(header.get("name") or "").casefold() == name.casefold():
+            value = str(header.get("value") or "").strip()
+            return value or None
+    return None
+
+
+def _message_time(message: dict) -> int:
+    try:
+        return int(message.get("internalDate") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _received_at(message: dict) -> str | None:
+    timestamp = _message_time(message)
+    if not timestamp:
+        return None
+    return datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).isoformat()
+
+
+def _decode_body(data: str | None) -> str:
+    if not data:
+        return ""
+    try:
+        padding = "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(data + padding).decode(
+            "utf-8", errors="replace"
+        )
+    except (ValueError, TypeError):
+        return ""
+
+
+def _html_to_text(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    for element in soup.select("script, style, .gmail_quote, blockquote.gmail_quote"):
+        element.decompose()
+    return unescape(soup.get_text("\n"))
+
+
+def _collect_mime_text(part: dict, plain: list[str], html: list[str]) -> None:
+    mime_type = str(part.get("mimeType") or "").casefold()
+    decoded = _decode_body((part.get("body") or {}).get("data"))
+    if mime_type == "text/plain" and decoded.strip():
+        plain.append(decoded)
+    elif mime_type == "text/html" and decoded.strip():
+        html.append(decoded)
+    for child in part.get("parts") or []:
+        _collect_mime_text(child, plain, html)
+
+
+def _extract_body_text(message: dict) -> str:
+    plain_parts: list[str] = []
+    html_parts: list[str] = []
+    _collect_mime_text(message.get("payload") or {}, plain_parts, html_parts)
+    if plain_parts:
+        return "\n".join(plain_parts)
+    return _html_to_text("\n".join(html_parts)) if html_parts else ""
+
+
+QUOTED_MARKERS = (
+    re.compile(r"^On .+ wrote:\s*$", re.IGNORECASE),
+    re.compile(r"^.+ tarihinde .+ şunu yazdı:\s*$", re.IGNORECASE),
+    re.compile(
+        r"^-{2,}\s*(Original Message|Forwarded message|İletilen ileti)\s*-{2,}$",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _clean_reply_text(text: str) -> str:
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(">"):
+            continue
+        if any(pattern.match(stripped) for pattern in QUOTED_MARKERS):
+            break
+        kept.append(line.rstrip())
+    cleaned = "\n".join(kept).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned or text.strip()
+
+
+def _external_replies(
+    *, original: dict, thread: dict, message_id: str, account_email: str
+) -> list[dict]:
+    own_addresses = {
+        parseaddr(account_email)[1].casefold(),
+        parseaddr(_header(original, "From") or "")[1].casefold(),
+    }
+    own_addresses.discard("")
+    original_time = _message_time(original)
+    replies = []
+    for message in thread.get("messages") or []:
+        if str(message.get("id") or "") == message_id:
+            continue
+        if _message_time(message) <= original_time:
+            continue
+        sender_address = parseaddr(_header(message, "From") or "")[1].casefold()
+        if not sender_address or sender_address in own_addresses:
+            continue
+        replies.append(message)
+    replies.sort(key=_message_time)
+    return replies
+
+
+def check_thread_replies(
+    *,
+    message_id: str,
+    thread_id: str | None = None,
+    service=None,
+    account_email: str | None = None,
+) -> GmailReplyResult:
+    try:
+        if service is None:
+            credentials = _load_credentials()
+            if credentials is None:
+                raise GmailNotConnectedError(
+                    "Gmail hesabı bağlı değil veya gmail.readonly izni eksik."
+                )
+            service = build(
+                "gmail", "v1", credentials=credentials, cache_discovery=False
+            )
+            account_email = account_email or _load_account_email()
+        if not account_email:
+            raise GmailNotConnectedError("Bağlı Gmail adresi belirlenemedi.")
+
+        original = (
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=message_id,
+                format="metadata",
+                metadataHeaders=["From", "Subject"],
+            )
+            .execute()
+        )
+        original_thread_id = str(original.get("threadId") or "").strip()
+        if thread_id and original_thread_id and thread_id != original_thread_id:
+            raise GmailReadError("Kayıtlı Gmail konuşma kimliği mesajla eşleşmiyor.")
+        resolved_thread_id = original_thread_id or str(thread_id or "").strip()
+        if not resolved_thread_id:
+            raise GmailReadError("Gönderilen Gmail konuşması bulunamadı.")
+        thread = (
+            service.users()
+            .threads()
+            .get(
+                userId="me",
+                id=resolved_thread_id,
+                format="metadata",
+                metadataHeaders=["From", "Subject"],
+            )
+            .execute()
+        )
+    except GmailNotConnectedError:
+        raise
+    except GmailReadError:
+        raise
+    except (HttpError, OSError, ValueError, TypeError) as error:
+        raise GmailReadError("Gmail yanıt bilgisi alınamadı.") from error
+
+    external_replies = _external_replies(
+        original=original,
+        thread=thread,
+        message_id=message_id,
+        account_email=account_email,
+    )
+    latest = external_replies[-1] if external_replies else None
+    latest_timestamp = _message_time(latest) if latest else 0
+    latest_at = (
+        datetime.fromtimestamp(latest_timestamp / 1000, tz=timezone.utc).isoformat()
+        if latest_timestamp
+        else None
+    )
+    snippet = " ".join(str((latest or {}).get("snippet") or "").split())[:240]
+    return GmailReplyResult(
+        has_reply=bool(external_replies),
+        reply_count=len(external_replies),
+        latest_reply_at=latest_at,
+        latest_reply_from=_header(latest, "From") if latest else None,
+        latest_reply_subject=_header(latest, "Subject") if latest else None,
+        latest_reply_snippet=snippet or None,
+        thread_id=resolved_thread_id,
+    )
+
+
+def get_latest_reply_content(
+    *,
+    message_id: str,
+    thread_id: str | None = None,
+    service=None,
+    account_email: str | None = None,
+) -> GmailReplyContent:
+    try:
+        if service is None:
+            credentials = _load_credentials()
+            if credentials is None:
+                raise GmailNotConnectedError(
+                    "Gmail hesabı bağlı değil veya gmail.readonly izni eksik."
+                )
+            service = build(
+                "gmail", "v1", credentials=credentials, cache_discovery=False
+            )
+            account_email = account_email or _load_account_email()
+        if not account_email:
+            raise GmailNotConnectedError("Bağlı Gmail adresi belirlenemedi.")
+
+        original = (
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="metadata")
+            .execute()
+        )
+        original_thread_id = str(original.get("threadId") or "").strip()
+        if thread_id and original_thread_id and thread_id != original_thread_id:
+            raise GmailReadError("Kayıtlı Gmail konuşma kimliği mesajla eşleşmiyor.")
+        resolved_thread_id = original_thread_id or str(thread_id or "").strip()
+        if not resolved_thread_id:
+            raise GmailReadError("Gönderilen Gmail konuşması bulunamadı.")
+        thread = (
+            service.users()
+            .threads()
+            .get(userId="me", id=resolved_thread_id, format="full")
+            .execute()
+        )
+        returned_thread_id = str(thread.get("id") or "").strip()
+        if returned_thread_id and returned_thread_id != resolved_thread_id:
+            raise GmailReadError("Gmail farklı bir konuşma döndürdü.")
+    except (GmailNotConnectedError, GmailReadError):
+        raise
+    except (HttpError, OSError, ValueError, TypeError) as error:
+        raise GmailReadError("Gmail yanıt içeriği alınamadı.") from error
+
+    replies = _external_replies(
+        original=original,
+        thread=thread,
+        message_id=message_id,
+        account_email=account_email,
+    )
+    if not replies:
+        raise GmailReadError("Bu Gmail konuşmasında dış yanıt bulunamadı.")
+    latest = replies[-1]
+    body_text = _clean_reply_text(_extract_body_text(latest))
+    if not body_text:
+        raise GmailReadError("Son Gmail yanıtının okunabilir metni bulunamadı.")
+    return GmailReplyContent(
+        sender=_header(latest, "From") or "",
+        subject=_header(latest, "Subject"),
+        received_at=_received_at(latest),
+        body_text=body_text,
+        thread_id=resolved_thread_id,
+    )

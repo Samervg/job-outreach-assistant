@@ -352,3 +352,33 @@ def update_application(
         return response.json(), None
     except (requests.RequestException, ValueError):
         return None, "Başvuru güncellenirken backend bağlantısı başarısız oldu."
+
+
+def sync_application_reply(
+    application_id: int,
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/applications/{application_id}/sync-reply",
+            timeout=30,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Gmail yanıt kontrolü sırasında backend bağlantısı başarısız oldu."
+
+
+def get_application_reply_content(
+    application_id: int,
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/applications/{application_id}/reply-content",
+            timeout=30,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Gmail yanıt içeriği alınırken backend bağlantısı başarısız oldu."

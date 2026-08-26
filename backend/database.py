@@ -28,7 +28,13 @@ def _create_outreach_table(
                 )),
             sent_at TEXT,
             gmail_message_id TEXT,
+            gmail_thread_id TEXT,
             error_message TEXT,
+            replied_at TEXT,
+            latest_reply_from TEXT,
+            latest_reply_subject TEXT,
+            latest_reply_snippet TEXT,
+            reply_count INTEGER NOT NULL DEFAULT 0,
             notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -41,7 +47,11 @@ def _upgrade_outreach_table(connection: sqlite3.Connection) -> None:
     columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(outreach)")
     }
-    required_columns = {"sent_at", "gmail_message_id", "error_message", "notes"}
+    required_columns = {
+        "sent_at", "gmail_message_id", "gmail_thread_id", "error_message",
+        "replied_at", "latest_reply_from", "latest_reply_subject",
+        "latest_reply_snippet", "reply_count", "notes",
+    }
     table_sql_row = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'outreach'"
     ).fetchone()
@@ -57,18 +67,27 @@ def _upgrade_outreach_table(connection: sqlite3.Connection) -> None:
     _create_outreach_table(connection, "outreach_upgrade")
     sent_at = "sent_at" if "sent_at" in columns else "NULL"
     gmail_message_id = "gmail_message_id" if "gmail_message_id" in columns else "NULL"
+    gmail_thread_id = "gmail_thread_id" if "gmail_thread_id" in columns else "NULL"
     error_message = "error_message" if "error_message" in columns else "NULL"
+    replied_at = "replied_at" if "replied_at" in columns else "NULL"
+    latest_reply_from = "latest_reply_from" if "latest_reply_from" in columns else "NULL"
+    latest_reply_subject = "latest_reply_subject" if "latest_reply_subject" in columns else "NULL"
+    latest_reply_snippet = "latest_reply_snippet" if "latest_reply_snippet" in columns else "NULL"
+    reply_count = "reply_count" if "reply_count" in columns else "0"
     notes = "notes" if "notes" in columns else "''"
     connection.execute(
         f"""
         INSERT INTO outreach_upgrade (
             id, company_id, company_name, recipient_email, position,
-            subject, body, status, sent_at, gmail_message_id, error_message,
-            notes, created_at, updated_at
+            subject, body, status, sent_at, gmail_message_id, gmail_thread_id,
+            error_message, replied_at, latest_reply_from, latest_reply_subject,
+            latest_reply_snippet, reply_count, notes, created_at, updated_at
         )
         SELECT
             id, company_id, company_name, recipient_email, position,
-            subject, body, status, {sent_at}, {gmail_message_id}, {error_message},
+            subject, body, status, {sent_at}, {gmail_message_id}, {gmail_thread_id},
+            {error_message}, {replied_at}, {latest_reply_from},
+            {latest_reply_subject}, {latest_reply_snippet}, {reply_count},
             {notes}, created_at, updated_at
         FROM outreach
         """

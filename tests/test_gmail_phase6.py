@@ -16,7 +16,11 @@ import backend.database as database
 import backend.gmail as gmail_router
 import backend.services.gmail_service as gmail_service
 from backend.gmail import SendDraftRequest
-from backend.services.gmail_service import GmailConnectionStatus, GmailSendError
+from backend.services.gmail_service import (
+    GmailConnectionStatus,
+    GmailSendError,
+    GmailSendResult,
+)
 
 
 class FakeMessages:
@@ -35,7 +39,9 @@ class FakeMessages:
 
 class FakeGmailService:
     def __init__(self, result=None):
-        self.messages_api = FakeMessages(result or {"id": "gmail-message-123"})
+        self.messages_api = FakeMessages(
+            result or {"id": "gmail-message-123", "threadId": "thread-123"}
+        )
 
     def users(self):
         return self
@@ -50,6 +56,7 @@ class GmailServiceTests(unittest.TestCase):
             "email",
             "openid",
             "https://www.googleapis.com/auth/gmail.send",
+            "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/userinfo.email",
         }
         self.assertTrue(gmail_service._has_required_scopes(returned_scopes))
@@ -58,6 +65,15 @@ class GmailServiceTests(unittest.TestCase):
         returned_scopes = {
             "email",
             "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+        }
+        self.assertFalse(gmail_service._has_required_scopes(returned_scopes))
+
+    def test_gmail_readonly_scope_is_mandatory(self):
+        returned_scopes = {
+            "email",
+            "openid",
+            "https://www.googleapis.com/auth/gmail.send",
             "https://www.googleapis.com/auth/userinfo.email",
         }
         self.assertFalse(gmail_service._has_required_scopes(returned_scopes))
@@ -129,6 +145,7 @@ class GmailServiceTests(unittest.TestCase):
                         "email",
                         "openid",
                         "https://www.googleapis.com/auth/gmail.send",
+                        "https://www.googleapis.com/auth/gmail.readonly",
                         "https://www.googleapis.com/auth/userinfo.email",
                     ],
                     "expires_at": time.time() + 3600,
@@ -157,6 +174,7 @@ class GmailServiceTests(unittest.TestCase):
                     "http://127.0.0.1:8000/gmail/auth/callback?"
                     f"state={query['state'][0]}&code=redacted&"
                     "scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.send"
+                    "%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly"
                     "%20openid%20email"
                 )
                 gmail_service.complete_oauth(callback_url, query["state"][0])
@@ -227,6 +245,7 @@ class GmailServiceTests(unittest.TestCase):
             requested,
             {
                 "https://www.googleapis.com/auth/gmail.send",
+                "https://www.googleapis.com/auth/gmail.readonly",
                 "openid",
                 "email",
             },
@@ -310,7 +329,8 @@ class GmailServiceTests(unittest.TestCase):
             message = BytesParser(policy=policy.default).parsebytes(
                 base64.urlsafe_b64decode(raw)
             )
-        self.assertEqual(message_id, "gmail-message-123")
+        self.assertEqual(message_id.message_id, "gmail-message-123")
+        self.assertEqual(message_id.thread_id, "thread-123")
         self.assertEqual(message["To"], "jobs@example.com")
         attachments = list(message.iter_attachments())
         self.assertEqual(len(attachments), 1)
@@ -370,7 +390,11 @@ class SendDraftTests(unittest.TestCase):
         connected = GmailConnectionStatus(True, "me@example.com", True, "ok")
         with (
             patch.object(gmail_router, "_connection_status", return_value=connected),
-            patch.object(gmail_router, "send_email", return_value="gmail-42") as sender,
+            patch.object(
+                gmail_router,
+                "send_email",
+                return_value=GmailSendResult("gmail-42", "thread-42"),
+            ) as sender,
         ):
             result = gmail_router.send_draft(1, SendDraftRequest(confirm_send=confirmed))
         return result, sender
@@ -421,6 +445,7 @@ class SendDraftTests(unittest.TestCase):
         self.assertEqual(result.status, "sent")
         self.assertIsNotNone(result.sent_at)
         self.assertEqual(result.gmail_message_id, "gmail-42")
+        self.assertEqual(result.gmail_thread_id, "thread-42")
         self.assertIsNone(result.error_message)
         sender.assert_called_once()
         with patch.object(gmail_router, "send_email") as second_sender:

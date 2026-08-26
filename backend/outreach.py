@@ -52,7 +52,13 @@ class DraftResponse(BaseModel):
     status: str
     sent_at: str | None
     gmail_message_id: str | None
+    gmail_thread_id: str | None
     error_message: str | None
+    replied_at: str | None
+    latest_reply_from: str | None
+    latest_reply_subject: str | None
+    latest_reply_snippet: str | None
+    reply_count: int
     notes: str
     created_at: str
     updated_at: str

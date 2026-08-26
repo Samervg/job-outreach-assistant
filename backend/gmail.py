@@ -113,7 +113,7 @@ def _mark_failed(draft_id: int, error_message: str) -> None:
             """
             UPDATE outreach
             SET status = 'failed', sent_at = NULL, gmail_message_id = NULL,
-                error_message = ?, updated_at = ?
+                gmail_thread_id = NULL, error_message = ?, updated_at = ?
             WHERE id = ? AND status != 'sent'
             """,
             (error_message[:1000], now, draft_id),
@@ -206,7 +206,7 @@ def send_draft(draft_id: int, request: SendDraftRequest) -> DraftResponse:
             )
 
         try:
-            message_id = send_email(
+            send_result = send_email(
                 recipient=recipient,
                 subject=subject,
                 body=body,
@@ -219,16 +219,24 @@ def send_draft(draft_id: int, request: SendDraftRequest) -> DraftResponse:
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
             ) from error
 
+        # String compatibility keeps older mocked integrations valid.
+        if isinstance(send_result, str):
+            message_id = send_result
+            thread_id = None
+        else:
+            message_id = send_result.message_id
+            thread_id = send_result.thread_id
+
         now = datetime.now(timezone.utc).isoformat()
         with get_connection() as connection:
             connection.execute(
                 """
                 UPDATE outreach
                 SET status = 'sent', sent_at = ?, gmail_message_id = ?,
-                    error_message = NULL, updated_at = ?
+                    gmail_thread_id = ?, error_message = NULL, updated_at = ?
                 WHERE id = ? AND status != 'sent'
                 """,
-                (now, message_id, now, draft_id),
+                (now, message_id, thread_id, now, draft_id),
             )
             sent_row = connection.execute(
                 "SELECT * FROM outreach WHERE id = ?", (draft_id,)

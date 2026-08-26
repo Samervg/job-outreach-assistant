@@ -1,6 +1,12 @@
 import streamlit as st
 
-from api_client import get_application, list_applications, update_application
+from api_client import (
+    get_application,
+    get_application_reply_content,
+    list_applications,
+    sync_application_reply,
+    update_application,
+)
 
 
 STATUS_LABELS = {
@@ -104,8 +110,61 @@ with st.container(border=True):
         st.write(f"**Gönderim zamanı (UTC):** {application['sent_at']}")
     if application.get("gmail_message_id"):
         st.write(f"**Gmail mesaj kimliği:** {application['gmail_message_id']}")
+    if application.get("replied_at"):
+        st.success("Yanıt var")
+        st.write(f"**Son yanıt zamanı (UTC):** {application['replied_at']}")
+        st.write(f"**Gönderen:** {application.get('latest_reply_from') or '—'}")
+        if application.get("latest_reply_subject"):
+            st.write(f"**Yanıt konusu:** {application['latest_reply_subject']}")
+        if application.get("latest_reply_snippet"):
+            st.write(f"**Kısa yanıt:** {application['latest_reply_snippet']}")
+        st.caption(f"Tespit edilen dış yanıt: {application.get('reply_count', 0)}")
     if application.get("error_message"):
         st.error(f"Gönderim hatası: {application['error_message']}")
+
+eligible_for_reply_sync = (
+    application["status"] in {"sent", "replied", "interview", "rejected", "offer"}
+    and bool(application.get("gmail_message_id"))
+)
+if eligible_for_reply_sync and st.button(
+    "Yanıtı kontrol et",
+    icon=":material/mark_email_read:",
+    key=f"sync_reply_{selected_id}",
+):
+    with st.spinner("Yalnızca bu başvurunun Gmail konuşması kontrol ediliyor..."):
+        sync_result, sync_error = sync_application_reply(selected_id)
+    if sync_error:
+        st.error(sync_error)
+    elif sync_result["has_reply"]:
+        st.success(
+            f"Yanıt bulundu ({sync_result['reply_count']}). "
+            "Başvuru bilgileri güncellendi."
+        )
+        st.rerun()
+    else:
+        st.info("Henüz yanıt yok.")
+
+if application.get("replied_at") and st.button(
+    "Yanıt içeriğini göster",
+    icon=":material/mail:",
+    key=f"show_reply_content_{selected_id}",
+):
+    with st.spinner("Yalnızca bu başvurunun doğrulanmış Gmail konuşması okunuyor..."):
+        reply_content, reply_content_error = get_application_reply_content(selected_id)
+    if reply_content_error:
+        st.error(reply_content_error)
+    else:
+        with st.container(border=True):
+            st.write(f"**Gönderen:** {reply_content.get('from') or '—'}")
+            st.write(f"**Tarih (UTC):** {reply_content.get('received_at') or '—'}")
+            st.write(f"**Konu:** {reply_content.get('subject') or '—'}")
+            st.text_area(
+                "Yanıt metni",
+                value=reply_content["body_text"],
+                height=220,
+                disabled=True,
+                key=f"reply_body_{selected_id}",
+            )
 
 with st.form(f"application_tracking_{selected_id}"):
     current_status = application["status"]
