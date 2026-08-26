@@ -1,5 +1,6 @@
 import sqlite3
 import re
+import json
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -8,6 +9,10 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_vali
 
 from backend.database import get_connection
 from backend.services.company_importer import CompanyImportError, import_company_preview
+from backend.services.company_research import (
+    CompanyResearchError,
+    research_company_website,
+)
 
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -54,6 +59,7 @@ class CompanyImportRequest(BaseModel):
 class OpenPositionPreview(BaseModel):
     title: str
     url: str
+    source_url: str | None = None
 
 
 class CompanyImportPreview(BaseModel):
@@ -73,6 +79,39 @@ class DuplicateCheckRequest(BaseModel):
 
 class DuplicateCheckResponse(BaseModel):
     duplicates: list[CompanyResponse]
+
+
+class ResearchSourceItem(BaseModel):
+    text: str
+    source_url: str
+
+
+class PersonalizationPoint(BaseModel):
+    text: str
+    source_url: str
+    source_excerpt: str
+    topics: list[str] = Field(default_factory=list)
+
+
+class CompanyResearchData(BaseModel):
+    company_name: str | None = None
+    summary: str | None = None
+    summary_source_url: str | None = None
+    focus_areas: list[str] = Field(default_factory=list)
+    products_or_services: list[ResearchSourceItem] = Field(default_factory=list)
+    technologies_or_topics: list[str] = Field(default_factory=list)
+    hiring_signals: list[str] = Field(default_factory=list)
+    personalization_points: list[PersonalizationPoint] = Field(default_factory=list)
+    source_pages: list[str] = Field(default_factory=list)
+
+
+class CompanyResearchResponse(BaseModel):
+    id: int
+    company_id: int
+    company_website_snapshot: str
+    research: CompanyResearchData
+    created_at: str
+    updated_at: str
 
 
 def _row_to_company(row: sqlite3.Row) -> CompanyResponse:
@@ -183,11 +222,15 @@ def get_company(company_id: int) -> CompanyResponse:
 
 @router.put("/{company_id}", response_model=CompanyResponse)
 def update_company(company_id: int, company: CompanyUpsert) -> CompanyResponse:
-    _get_company_row(company_id)
+    existing = _get_company_row(company_id)
     now = datetime.now(timezone.utc).isoformat()
     website = str(company.website) if company.website else None
 
     with get_connection() as connection:
+        if (existing["website"] or None) != website:
+            connection.execute(
+                "DELETE FROM company_research WHERE company_id = ?", (company_id,)
+            )
         connection.execute(
             """
             UPDATE companies
@@ -209,6 +252,84 @@ def update_company(company_id: int, company: CompanyUpsert) -> CompanyResponse:
         ).fetchone()
 
     return _row_to_company(row)
+
+
+def _row_to_research(row: sqlite3.Row) -> CompanyResearchResponse:
+    try:
+        research = CompanyResearchData.model_validate(json.loads(row["research_json"]))
+    except (ValueError, TypeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Kaydedilmiş şirket araştırması okunamadı.",
+        ) from error
+    return CompanyResearchResponse(
+        id=row["id"],
+        company_id=row["company_id"],
+        company_website_snapshot=row["company_website_snapshot"],
+        research=research,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.post("/{company_id}/research", response_model=CompanyResearchResponse)
+def research_company(company_id: int) -> CompanyResearchResponse:
+    company = _get_company_row(company_id)
+    website = str(company["website"] or "").strip()
+    if not website:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Şirket araştırması için web sitesi gereklidir.",
+        )
+    try:
+        research = CompanyResearchData.model_validate(
+            research_company_website(website)
+        )
+    except CompanyResearchError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+        ) from error
+
+    now = datetime.now(timezone.utc).isoformat()
+    research_json = json.dumps(research.model_dump(), ensure_ascii=False)
+    with get_connection() as connection:
+        existing = connection.execute(
+            "SELECT created_at FROM company_research WHERE company_id = ?",
+            (company_id,),
+        ).fetchone()
+        created_at = existing["created_at"] if existing else now
+        connection.execute(
+            """
+            INSERT INTO company_research (
+                company_id, company_website_snapshot, research_json,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(company_id) DO UPDATE SET
+                company_website_snapshot = excluded.company_website_snapshot,
+                research_json = excluded.research_json,
+                updated_at = excluded.updated_at
+            """,
+            (company_id, website, research_json, created_at, now),
+        )
+        row = connection.execute(
+            "SELECT * FROM company_research WHERE company_id = ?", (company_id,)
+        ).fetchone()
+    return _row_to_research(row)
+
+
+@router.get("/{company_id}/research", response_model=CompanyResearchResponse)
+def get_company_research(company_id: int) -> CompanyResearchResponse:
+    company = _get_company_row(company_id)
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM company_research WHERE company_id = ?", (company_id,)
+        ).fetchone()
+    if row is None or row["company_website_snapshot"] != company["website"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bu şirket için güncel araştırma bulunmuyor.",
+        )
+    return _row_to_research(row)
 
 
 @router.delete("/{company_id}", status_code=status.HTTP_204_NO_CONTENT)

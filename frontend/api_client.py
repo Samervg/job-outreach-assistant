@@ -177,6 +177,34 @@ def check_company_duplicates(
         return None, "Benzer şirket kontrolü yapılamadı."
 
 
+def get_company_research(
+    company_id: int,
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/companies/{company_id}/research", timeout=10
+        )
+        if response.status_code == 404:
+            return None, None
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Şirket araştırması backend'den alınamadı."
+
+
+def research_company(company_id: int) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/companies/{company_id}/research", timeout=60
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Şirket araştırılırken backend bağlantısı başarısız oldu."
+
+
 def get_ollama_status() -> tuple[dict | None, str | None]:
     try:
         response = requests.get(f"{BACKEND_URL}/ollama/status", timeout=10)

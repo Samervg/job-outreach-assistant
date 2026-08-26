@@ -34,6 +34,15 @@ class EmailEvidenceChoice:
     sentence: str
 
 
+@dataclass
+class CompanyPersonalizationChoice:
+    sentence: str
+    source_url: str
+    source_excerpt: str
+    topic: str
+    score: int
+
+
 AI_CONCEPT_WEIGHTS = {
     "computer vision": 12,
     "bilgisayarlı görü": 12,
@@ -216,6 +225,93 @@ def _build_evidence_sentence(
     return ranked[0].sentence if ranked else None
 
 
+COMPANY_TOPIC_ALIASES = {
+    "artificial intelligence": ("ai", "artificial intelligence", "yapay zeka"),
+    "machine learning": ("machine learning", "makine ogrenmesi"),
+    "generative ai": ("generative ai", "genai", "uretken yapay zeka"),
+    "rag": ("rag", "retrieval augmented generation", "retrieval-augmented generation"),
+    "llm": ("llm", "large language model", "large language models"),
+    "computer vision": ("computer vision", "bilgisayarli goru", "u-net", "resnet"),
+    "data analytics": ("data analytics", "data analysis", "veri analitigi"),
+    "cloud": ("cloud", "bulut"),
+    "cybersecurity": ("cybersecurity", "cyber security", "siber guvenlik"),
+    "fintech": ("fintech",),
+    "e-ticaret": ("e-commerce", "ecommerce", "e-ticaret"),
+}
+
+
+def _contains_alias(text: str, aliases: tuple[str, ...]) -> bool:
+    normalized = _normalized(text)
+    return any(
+        re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", normalized)
+        for alias in aliases
+    )
+
+
+def _canonical_company_sentence(topic: str) -> str:
+    return f"Şirketinizin {topic} alanındaki çalışmaları ilgimi çekti."
+
+
+UNSUPPORTED_COMPANY_CUES = (
+    "şirketiniz", "ürününüz", "ürünleriniz", "hizmetiniz", "hizmetleriniz",
+    "müşteriniz", "müşterileriniz", "ortaklığınız", "başarınız", "lider",
+    "vizyonunuz", "faaliyetiniz", "çalışmalarınız",
+)
+
+
+def _validate_company_claims(
+    body: str, company_choice: CompanyPersonalizationChoice | None
+) -> None:
+    remaining = body
+    if company_choice:
+        remaining = remaining.replace(company_choice.sentence, "", 1)
+    normalized_remaining = _normalized(remaining)
+    if any(cue in normalized_remaining for cue in UNSUPPORTED_COMPANY_CUES):
+        raise OllamaInvalidResponseError(
+            "Ollama doğrulanmamış bir şirket iddiası ekledi. Tekrar deneyin."
+        )
+
+
+def select_company_personalization(
+    relevant_evidence: dict | None,
+    target_position: str,
+    company_research: dict | None,
+) -> CompanyPersonalizationChoice | None:
+    ranked_evidence = rank_email_evidence(relevant_evidence, target_position)
+    if not ranked_evidence or not company_research:
+        return None
+    candidate = ranked_evidence[0]
+    candidate_text = " ".join(candidate.concepts + [candidate.label, candidate.sentence])
+    target_text = _normalized(target_position)
+    choices = []
+    for point in company_research.get("personalization_points") or []:
+        excerpt = str(point.get("source_excerpt") or "").strip()
+        source_url = str(point.get("source_url") or "").strip()
+        point_text = str(point.get("text") or "").strip()
+        for topic in point.get("topics") or []:
+            topic_key = _normalized(str(topic))
+            aliases = COMPANY_TOPIC_ALIASES.get(topic_key, (topic_key,))
+            if not point_text or not excerpt or not source_url:
+                continue
+            if point_text != _canonical_company_sentence(str(topic)):
+                continue
+            if not _contains_alias(excerpt, aliases):
+                continue
+            if not _contains_alias(candidate_text, aliases):
+                continue
+            score = 10 + (3 if _contains_alias(target_text, aliases) else 0) + candidate.score
+            choices.append(
+                CompanyPersonalizationChoice(
+                    sentence=point_text,
+                    source_url=source_url,
+                    source_excerpt=excerpt,
+                    topic=str(topic),
+                    score=score,
+                )
+            )
+    return max(choices, key=lambda choice: choice.score) if choices else None
+
+
 def get_available_models() -> list[str]:
     try:
         response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
@@ -244,7 +340,10 @@ def ensure_configured_model() -> list[str]:
 
 
 def _build_prompt(
-    profile: dict, company: dict, relevant_evidence: dict | None = None
+    profile: dict,
+    company: dict,
+    relevant_evidence: dict | None = None,
+    company_research: dict | None = None,
 ) -> str:
     candidate_name = str(profile["name"]).strip().title()
     company_name = " ".join(
@@ -254,17 +353,24 @@ def _build_prompt(
     evidence_sentence = _build_evidence_sentence(
         relevant_evidence, str(company["target_position"])
     )
+    company_choice = select_company_personalization(
+        relevant_evidence, str(company["target_position"]), company_research
+    )
+    company_sentence = company_choice.sentence if company_choice else None
     if evidence_sentence:
+        verified_paragraph = " ".join(
+            value for value in (evidence_sentence, company_sentence) if value
+        )
         evidence_section = f"""
-Doğrulanmış CV kanıt cümlesi:
-"{evidence_sentence}"
+Doğrulanmış ikinci paragraf:
+"{verified_paragraph}"
 
-İkinci paragrafta yalnızca bu cümleyi AYNEN kullan. Kelime ekleme, çıkarma veya
-değiştirme; öncesine ya da sonrasına başka teknik cümle ekleme. Bu proje profesyonel
-iş deneyimi değildir.
+İkinci paragrafta yalnızca bu paragrafı AYNEN kullan. Kelime ekleme, çıkarma veya
+değiştirme; öncesine ya da sonrasına başka teknik veya şirket cümlesi ekleme.
+Proje kanıtı profesyonel iş deneyimi değildir.
 """.strip()
         second_paragraph_rule = (
-            "3. İkinci paragraf yalnızca aşağıdaki doğrulanmış CV kanıt cümlesi olsun."
+            "3. İkinci paragraf yalnızca aşağıdaki doğrulanmış paragraf olsun."
         )
         project_rule = (
             "- Somut proje ayrıntısı yalnızca doğrulanmış CV kanıtlarında bulunuyorsa "
@@ -340,7 +446,10 @@ Markdown ekleme.
 
 
 def generate_email(
-    profile: dict, company: dict, relevant_evidence: dict | None = None
+    profile: dict,
+    company: dict,
+    relevant_evidence: dict | None = None,
+    company_research: dict | None = None,
 ) -> GeneratedEmail:
     ensure_configured_model()
 
@@ -367,7 +476,9 @@ def generate_email(
             },
             {
                 "role": "user",
-                "content": _build_prompt(profile, company, relevant_evidence),
+                "content": _build_prompt(
+                    profile, company, relevant_evidence, company_research
+                ),
             },
         ],
         "stream": False,
@@ -403,11 +514,23 @@ def generate_email(
     evidence_sentence = _build_evidence_sentence(
         relevant_evidence, str(company["target_position"])
     )
+    company_choice = select_company_personalization(
+        relevant_evidence, str(company["target_position"]), company_research
+    )
     if evidence_sentence:
         paragraphs = [paragraph.strip() for paragraph in body.split("\n\n")]
-        if evidence_sentence not in paragraphs:
-            raise OllamaInvalidResponseError(
-                "Ollama doğrulanmış CV kanıtını güvenli biçimde kullanmadı. Tekrar deneyin."
+        expected_paragraph = " ".join(
+            value
+            for value in (
+                evidence_sentence,
+                company_choice.sentence if company_choice else None,
             )
+            if value
+        )
+        if expected_paragraph not in paragraphs:
+            raise OllamaInvalidResponseError(
+                "Ollama doğrulanmış aday/şirket kanıtını güvenli biçimde kullanmadı. Tekrar deneyin."
+            )
+    _validate_company_claims(body, company_choice)
 
     return GeneratedEmail(subject=subject, body=body)

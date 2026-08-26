@@ -4,9 +4,17 @@ from api_client import (
     check_company_duplicates,
     create_company,
     delete_company,
+    get_company_research,
     import_company_preview,
     list_companies,
+    research_company,
     update_company,
+)
+from company_import_state import (
+    clear_company_import_state,
+    clear_stale_company_import_state,
+    current_company_import_preview,
+    store_company_import_preview,
 )
 
 
@@ -14,32 +22,40 @@ st.header("Şirketler")
 st.caption("İletişime geçmek istediğiniz şirketleri manuel olarak yönetin.")
 
 st.subheader("Website'den şirket ekle")
-import_website = st.text_input(
-    "Şirket web sitesi",
-    placeholder="https://example.com",
-    key="company_import_website",
-)
-if st.button("Siteyi tara", icon=":material/travel_explore:"):
+with st.form("company_import_scan_form"):
+    import_website = st.text_input(
+        "Şirket web sitesi",
+        placeholder="https://example.com",
+        key="company_import_website",
+    )
+    scan_submitted = st.form_submit_button(
+        "Siteyi tara", icon=":material/travel_explore:"
+    )
+clear_stale_company_import_state(st.session_state, import_website)
+
+if scan_submitted:
+    current_import_url = str(
+        st.session_state.get("company_import_website") or ""
+    ).strip()
+    clear_company_import_state(st.session_state)
     with st.spinner("Herkese açık şirket sayfaları inceleniyor..."):
-        preview, preview_error = import_company_preview(import_website)
+        preview, preview_error = import_company_preview(current_import_url)
     if preview_error:
         st.error(preview_error)
     else:
-        st.session_state["company_import_preview"] = preview
-        st.session_state.pop("company_import_pending", None)
-        for key in (
-            "import_company_name",
-            "import_company_website_edit",
-            "import_contact_email",
-            "import_career_page",
-            "import_contact_page",
-            "import_position_override",
-        ):
-            st.session_state.pop(key, None)
-        st.success("Önizleme hazır. Bilgileri kontrol edip düzenleyin.")
-        st.rerun()
+        stored = store_company_import_preview(
+            st.session_state, current_import_url, preview
+        )
+        if not stored:
+            st.error(
+                "Backend farklı bir web sitesine ait önizleme döndürdü; "
+                "eski veya uyumsuz sonuç gösterilmedi."
+            )
+        else:
+            st.success("Önizleme hazır. Bilgileri kontrol edip düzenleyin.")
+            st.rerun()
 
-preview = st.session_state.get("company_import_preview")
+preview = current_company_import_preview(st.session_state, import_website)
 if preview:
     positions = preview.get("open_positions") or []
     position_titles = [position["title"] for position in positions]
@@ -122,7 +138,7 @@ if preview:
             if create_error:
                 st.error(create_error)
             else:
-                st.session_state.pop("company_import_preview", None)
+                clear_company_import_state(st.session_state)
                 st.success(f"{created['name']} açık onayınızla kaydedildi.")
                 st.rerun()
 
@@ -151,8 +167,7 @@ if pending_import:
         if update_error:
             st.error(update_error)
         else:
-            st.session_state.pop("company_import_pending", None)
-            st.session_state.pop("company_import_preview", None)
+            clear_company_import_state(st.session_state)
             st.success(f"{updated['name']} açık onayınızla güncellendi.")
             st.rerun()
     if cancel_import:
@@ -220,6 +235,50 @@ selected_company_id = st.selectbox(
     ),
 )
 selected_company = company_by_id[selected_company_id]
+
+st.subheader("Şirketi araştır")
+research_result, research_load_error = get_company_research(selected_company_id)
+if research_load_error:
+    st.error(research_load_error)
+elif research_result:
+    st.caption(f"Son araştırma: {research_result['updated_at']}")
+else:
+    st.caption("Bu şirket için henüz güncel araştırma yok.")
+
+if st.button(
+    "Şirketi araştır",
+    key=f"research_company_{selected_company_id}",
+    disabled=not bool(selected_company.get("website")),
+):
+    with st.spinner("Herkese açık şirket sayfaları inceleniyor..."):
+        research_result, research_error = research_company(selected_company_id)
+    if research_error:
+        st.error(research_error)
+    else:
+        st.success("Şirket araştırması kaydedildi.")
+        st.rerun()
+
+if not selected_company.get("website"):
+    st.info("Araştırma için önce şirket web sitesini kaydedin.")
+elif research_result:
+    research = research_result["research"]
+    if research.get("summary"):
+        st.write(research["summary"])
+    if research.get("focus_areas"):
+        st.write("Odak alanları: " + ", ".join(research["focus_areas"]))
+    if research.get("products_or_services"):
+        st.write(
+            "Ürün/hizmet sinyalleri: "
+            + ", ".join(item["text"] for item in research["products_or_services"])
+        )
+    if research.get("hiring_signals"):
+        st.write("İşe alım sinyalleri: " + ", ".join(research["hiring_signals"]))
+    for point in research.get("personalization_points") or []:
+        st.info(point["text"])
+        st.caption(f"Kaynak: {point['source_url']}")
+    with st.expander("Kaynak sayfalar"):
+        for source_url in research.get("source_pages") or []:
+            st.markdown(f"- [{source_url}]({source_url})")
 
 with st.form(f"edit_company_form_{selected_company_id}"):
     st.subheader("Seçili şirketi düzenle")

@@ -144,10 +144,27 @@ def generate_draft(request: DraftGenerateRequest) -> DraftResponse:
         )
 
     relevant_evidence = None
+    company_research = None
     with get_connection() as connection:
         analysis_row = connection.execute(
             "SELECT * FROM cv_analysis WHERE id = 1"
         ).fetchone()
+        research_row = connection.execute(
+            """
+            SELECT research_json, company_website_snapshot
+            FROM company_research WHERE company_id = ?
+            """,
+            (company["id"],),
+        ).fetchone()
+
+    if (
+        research_row is not None
+        and research_row["company_website_snapshot"] == company.get("website")
+    ):
+        try:
+            company_research = json.loads(research_row["research_json"])
+        except (ValueError, TypeError):
+            company_research = None
 
     if (
         analysis_row is not None
@@ -174,7 +191,9 @@ def generate_draft(request: DraftGenerateRequest) -> DraftResponse:
             ) from error
 
     try:
-        generated = generate_email(profile, company, relevant_evidence)
+        generated = generate_email(
+            profile, company, relevant_evidence, company_research
+        )
     except OllamaModelUnavailableError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)

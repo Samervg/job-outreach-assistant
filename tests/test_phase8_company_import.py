@@ -46,6 +46,77 @@ def html(value):
 
 
 class CompanyImporterTests(unittest.TestCase):
+    def test_career_cards_extract_titles_and_external_ats_links_without_fetching_them(self):
+        careers = """
+        <html><head><title>Careers</title></head><body>
+        <nav><h3>Careers</h3></nav>
+        <section><h2>Open Positions</h2>
+          <article class="job-card">
+            <h4>Engineering</h4><h5>AI Engineer</h5>
+            <p>On-Site</p><p>Istanbul</p>
+            <a href="https://jobs.lever.co/example/ai-123">See Details</a>
+          </article>
+          <article class="job-card">
+            <h4>Engineering</h4><h5>Backend Developer</h5>
+            <p>On-Site</p><p>Istanbul</p>
+            <a href="https://jobs.lever.co/example/backend-456">See Details</a>
+          </article>
+          <article class="job-card">
+            <h4>Engineering</h4><h5>AI Engineer</h5>
+            <a href="https://jobs.lever.co/example/ai-123">Apply Now</a>
+          </article>
+        </section></body></html>
+        """
+        session = FakeSession({"https://example.com/careers": html(careers)})
+        with patch.object(importer, "_validate_public_host"):
+            preview = importer.import_company_preview(
+                "https://example.com/careers", session
+            )
+
+        self.assertEqual(
+            [position["title"] for position in preview["open_positions"]],
+            ["AI Engineer", "Backend Developer"],
+        )
+        self.assertEqual(
+            preview["open_positions"][0]["url"],
+            "https://jobs.lever.co/example/ai-123",
+        )
+        self.assertEqual(
+            preview["open_positions"][0]["source_url"],
+            "https://example.com/careers",
+        )
+        self.assertEqual(session.calls, ["https://example.com/careers"])
+        rejected = {
+            "Careers", "Open Positions", "Engineering", "On-Site", "Istanbul",
+            "See Details", "Apply Now",
+        }
+        self.assertTrue(
+            rejected.isdisjoint(
+                {position["title"] for position in preview["open_positions"]}
+            )
+        )
+
+    def test_two_urls_in_same_process_and_session_do_not_leak_results(self):
+        session = FakeSession(
+            {
+                "https://a.example/": html(
+                    '<html><head><meta property="og:site_name" content="Company A"></head></html>'
+                ),
+                "https://b.example/": html(
+                    '<html><head><meta property="og:site_name" content="Company B"></head></html>'
+                ),
+            }
+        )
+        with patch.object(importer, "_validate_public_host"):
+            preview_a = importer.import_company_preview("https://a.example/", session)
+            preview_b = importer.import_company_preview("https://b.example/", session)
+
+        self.assertEqual(preview_a["website"], "https://a.example/")
+        self.assertEqual(preview_a["company_name"], "Company A")
+        self.assertEqual(preview_b["website"], "https://b.example/")
+        self.assertEqual(preview_b["company_name"], "Company B")
+        self.assertEqual(session.calls, ["https://a.example/", "https://b.example/"])
+
     def test_grounded_extraction_and_shallow_same_domain_crawl(self):
         homepage = """
         <html><head><title>Fallback Name - Home</title>

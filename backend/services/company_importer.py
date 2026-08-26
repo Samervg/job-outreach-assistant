@@ -52,6 +52,24 @@ GENERIC_JOB_LABELS = {
     "view", "view job", "learn more", "incele", "devamı", "devami",
     "careers", "career", "jobs", "job", "kariyer", "açık pozisyonlar",
 }
+JOB_TITLE_TERMS = (
+    "engineer", "developer", "artist", "animator", "designer", "manager",
+    "intern", "specialist", "analyst", "scientist", "architect", "producer",
+    "tester", "recruiter", "consultant", "coordinator", "programmer",
+    "muhendis", "gelistirici", "uzman", "stajyer", "tasarimci", "sanatci",
+)
+NON_JOB_TITLES = GENERIC_JOB_LABELS | {
+    "open positions", "open roles", "vacancies", "job openings",
+    "engineering", "product", "art", "design", "technology", "operations",
+    "marketing", "finance", "human resources", "people", "sales",
+    "istanbul", "turkey", "turkiye", "remote", "hybrid", "on-site", "onsite",
+    "full-time", "part-time", "contract", "department", "location",
+}
+DETAIL_LINK_LABELS = {
+    "see details", "view details", "job details", "learn more", "apply",
+    "apply now", "basvur", "basvurun", "detay", "detaylar", "incele",
+}
+ATS_HOSTS = ("lever.co", "greenhouse.io", "ashbyhq.com", "workable.com")
 EMAIL_PATTERN = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 ROLE_EMAIL_ORDER = (
     "hr", "careers", "jobs", "recruitment", "recruiting", "talent",
@@ -284,28 +302,80 @@ def _relevant_links(soup: BeautifulSoup, base_url: str, domain: str) -> list[tup
     )
 
 
-def _extract_jobs(soup: BeautifulSoup, page_url: str) -> list[dict]:
-    jobs = []
-    seen = set()
-    for link in soup.select("a[href]"):
-        title = _clean_text(link.get_text(" ", strip=True))
-        if not title or len(title) < 3 or len(title) > 120:
-            continue
-        lowered_title = title.lower()
-        absolute = urljoin(page_url, link.get("href", "").strip())
-        path = urlparse(absolute).path.lower()
-        if lowered_title in GENERIC_JOB_LABELS:
-            continue
-        if not any(term in path for term in JOB_PATH_TERMS):
-            continue
-        key = (title.casefold(), absolute)
-        if key in seen:
-            continue
-        seen.add(key)
-        jobs.append({"title": title, "url": absolute})
-        if len(jobs) >= MAX_OPEN_POSITIONS:
+def _is_job_title(value: str | None) -> bool:
+    title = _clean_text(value)
+    if not title or len(title) < 3 or len(title) > 120:
+        return False
+    lowered = title.casefold().strip(" :-â€“â€”|")
+    if lowered in NON_JOB_TITLES:
+        return False
+    return any(
+        re.search(rf"(?<!\w){re.escape(term)}(?!\w)", lowered)
+        for term in JOB_TITLE_TERMS
+    )
+
+
+def _looks_like_job_link(link, page_url: str) -> bool:
+    label = (_clean_text(link.get_text(" ", strip=True)) or "").casefold()
+    absolute = urljoin(page_url, link.get("href", "").strip())
+    parsed = urlparse(absolute)
+    hostname = (parsed.hostname or "").casefold()
+    return (
+        label in DETAIL_LINK_LABELS
+        or any(term in parsed.path.casefold() for term in JOB_PATH_TERMS)
+        or any(hostname == host or hostname.endswith(f".{host}") for host in ATS_HOSTS)
+    )
+
+
+def _nearby_job_title(link) -> str | None:
+    container = link
+    for _ in range(8):
+        container = container.parent
+        if container is None:
             break
-    return jobs
+        headings = container.select("h2, h3, h4, h5, h6")
+        candidates = [
+            _clean_text(heading.get_text(" ", strip=True)) for heading in headings
+        ]
+        valid = [title for title in candidates if _is_job_title(title)]
+        if valid:
+            return valid[-1]
+    return None
+
+
+def _extract_jobs(soup: BeautifulSoup, page_url: str) -> list[dict]:
+    jobs_by_title = {}
+
+    def add_job(title: str | None, detail_url: str | None = None) -> None:
+        title = _clean_text(title)
+        if not _is_job_title(title):
+            return
+        key = title.casefold()
+        job = {
+            "title": title,
+            "url": detail_url or page_url,
+            "source_url": page_url,
+        }
+        existing = jobs_by_title.get(key)
+        if existing is None or (
+            existing["url"] == page_url and job["url"] != page_url
+        ):
+            jobs_by_title[key] = job
+
+    # Cards often keep the title in a heading and use a generic "Apply/Details" link.
+    for link in soup.select("a[href]"):
+        absolute = urljoin(page_url, link.get("href", "").strip())
+        link_title = _clean_text(link.get_text(" ", strip=True))
+        if _is_job_title(link_title):
+            add_job(link_title, absolute)
+        elif _looks_like_job_link(link, page_url):
+            add_job(_nearby_job_title(link), absolute)
+
+    # Some career pages expose positions only as headings without detail links.
+    for heading in soup.select("h2, h3, h4, h5, h6"):
+        add_job(heading.get_text(" ", strip=True))
+
+    return list(jobs_by_title.values())[:MAX_OPEN_POSITIONS]
 
 
 def import_company_preview(website: str, session: requests.Session | None = None) -> dict:
