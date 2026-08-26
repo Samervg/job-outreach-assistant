@@ -277,15 +277,81 @@ class DuplicateCompanyTests(unittest.TestCase):
         self.database_patch.stop()
         self.temp_directory.cleanup()
 
-    def test_duplicate_detected_by_domain_or_normalized_name(self):
+    def test_same_company_and_same_position_is_duplicate(self):
         by_domain = companies.check_company_duplicate(
-            DuplicateCheckRequest(name="Different", website="https://acme.example/jobs")
+            DuplicateCheckRequest(
+                name="Different",
+                website="https://acme.example/jobs",
+                target_position=" ai   engineer ",
+            )
         )
         by_name = companies.check_company_duplicate(
-            DuplicateCheckRequest(name="  ACME-teknoloji ", website=None)
+            DuplicateCheckRequest(
+                name="  ACME-teknoloji ", website=None, target_position="AI Engineer"
+            )
         )
         self.assertEqual([item.id for item in by_domain.duplicates], [self.company.id])
         self.assertEqual([item.id for item in by_name.duplicates], [self.company.id])
+
+    def test_same_company_with_different_position_is_not_duplicate(self):
+        by_domain = companies.check_company_duplicate(
+            DuplicateCheckRequest(
+                name="Different",
+                website="https://acme.example/jobs",
+                target_position="Backend Developer",
+            )
+        )
+        by_name = companies.check_company_duplicate(
+            DuplicateCheckRequest(
+                name="ACME Teknoloji",
+                website=None,
+                target_position="AI/ML Engineer",
+            )
+        )
+        self.assertEqual(by_domain.duplicates, [])
+        self.assertEqual(by_name.duplicates, [])
+
+    def test_same_name_without_website_respects_position(self):
+        same = companies.check_company_duplicate(
+            DuplicateCheckRequest(
+                name="acme teknoloji", website=None, target_position="AI Engineer"
+            )
+        )
+        different = companies.check_company_duplicate(
+            DuplicateCheckRequest(
+                name="acme teknoloji", website=None, target_position="Frontend Developer"
+            )
+        )
+        self.assertEqual([item.id for item in same.duplicates], [self.company.id])
+        self.assertEqual(different.duplicates, [])
+
+    def test_distinct_roles_are_not_over_normalized(self):
+        self.assertNotEqual(
+            companies._normalized_position("Frontend Developer"),
+            companies._normalized_position("Backend Developer"),
+        )
+        self.assertNotEqual(
+            companies._normalized_position("AI Engineer"),
+            companies._normalized_position("AI/ML Engineer"),
+        )
+
+    def test_multiple_roles_for_same_company_remain_separate(self):
+        second = companies.create_company(
+            CompanyUpsert(
+                name="Acme Teknoloji",
+                website="https://acme.example",
+                contact_email="hr@acme.example",
+                target_position="Backend Developer",
+            )
+        )
+        listed = companies.list_companies()
+        self.assertEqual(
+            [(item.id, item.target_position) for item in listed],
+            [
+                (self.company.id, "AI Engineer"),
+                (second.id, "Backend Developer"),
+            ],
+        )
 
     def test_preview_endpoint_never_saves_a_company(self):
         before = len(companies.list_companies())

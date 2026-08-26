@@ -9,6 +9,7 @@ from streamlit.testing.v1 import AppTest
 from frontend import api_client
 from frontend.company_import_state import (
     clear_company_import_state,
+    clear_stale_duplicate_state,
     clear_stale_company_import_state,
     current_company_import_preview,
     preview_matches_source_url,
@@ -23,6 +24,20 @@ PREVIEW_B = {"company_name": "Algometa Tech", "website": URL_B}
 
 
 class CompanyImportStateTests(unittest.TestCase):
+    def test_changing_selected_position_clears_duplicate_state(self):
+        state = {
+            "company_import_pending": {
+                "target_position": "Frontend Developer",
+                "duplicates": [{"id": 1}],
+            }
+        }
+
+        clear_stale_duplicate_state(state, "frontend   developer")
+        self.assertIn("company_import_pending", state)
+
+        clear_stale_duplicate_state(state, "AI/ML Engineer")
+        self.assertNotIn("company_import_pending", state)
+
     def test_scan_a_then_change_to_b_hides_old_preview_and_clears_duplicate(self):
         state = {}
         store_company_import_preview(state, URL_A, PREVIEW_A)
@@ -74,6 +89,28 @@ class CompanyImportStateTests(unittest.TestCase):
 
 
 class CompanyImportApiClientTests(unittest.TestCase):
+    def test_duplicate_check_sends_selected_target_position(self):
+        calls = []
+
+        class Response:
+            ok = True
+
+            def json(self):
+                return {"duplicates": []}
+
+        def fake_post(url, *, json, timeout):
+            calls.append((url, json, timeout))
+            return Response()
+
+        with patch.object(api_client.requests, "post", side_effect=fake_post):
+            duplicates, error = api_client.check_company_duplicates(
+                "ClusterEye", "https://clustereye.com", "AI/ML Engineer"
+            )
+
+        self.assertEqual(duplicates, [])
+        self.assertIsNone(error)
+        self.assertEqual(calls[0][1]["target_position"], "AI/ML Engineer")
+
     def test_consecutive_urls_send_distinct_json_payloads(self):
         calls = []
 
@@ -150,6 +187,60 @@ class CompanyImportApiClientTests(unittest.TestCase):
                 )
                 self.assertEqual(calls, [URL_A, URL_B])
                 self.assertEqual(len(app.exception), 0)
+        finally:
+            os.chdir(previous_directory)
+            sys.path.remove(str(frontend))
+            if previous_api_module is None:
+                sys.modules.pop("api_client", None)
+            else:
+                sys.modules["api_client"] = previous_api_module
+
+    def test_new_application_lists_same_company_roles_separately(self):
+        project_root = Path(__file__).resolve().parents[1]
+        frontend = project_root / "frontend"
+        previous_directory = Path.cwd()
+        saved_companies = [
+            {
+                "id": 1,
+                "name": "ClusterEye",
+                "website": "https://clustereye.com",
+                "contact_email": "jobs@clustereye.com",
+                "target_position": "Frontend Developer",
+            },
+            {
+                "id": 2,
+                "name": "ClusterEye",
+                "website": "https://clustereye.com",
+                "contact_email": "jobs@clustereye.com",
+                "target_position": "AI/ML Engineer",
+            },
+        ]
+
+        os.chdir(frontend)
+        sys.path.insert(0, str(frontend))
+        previous_api_module = sys.modules.get("api_client")
+        sys.modules["api_client"] = api_client
+        try:
+            with patch.object(
+                api_client,
+                "get_gmail_status",
+                return_value=({"connected": True, "email": "test@example.com"}, None),
+            ), patch.object(
+                api_client,
+                "get_ollama_status",
+                return_value=({"model_available": True, "message": "Hazır"}, None),
+            ), patch.object(
+                api_client, "list_companies", return_value=(saved_companies, None)
+            ), patch.object(api_client, "list_drafts", return_value=([], None)):
+                app = AppTest.from_file(
+                    str(frontend / "app_pages" / "new_application.py")
+                ).run(timeout=20)
+
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(app.selectbox[0].options, [
+                "ClusterEye — Frontend Developer",
+                "ClusterEye — AI/ML Engineer",
+            ])
         finally:
             os.chdir(previous_directory)
             sys.path.remove(str(frontend))

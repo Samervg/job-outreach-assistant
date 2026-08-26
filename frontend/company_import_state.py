@@ -17,6 +17,10 @@ def normalized_source_url(value: str) -> str:
     return value.strip()
 
 
+def normalized_target_position(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
 def _domain(value: str) -> str | None:
     parsed = urlparse(value if "://" in value else f"https://{value}")
     hostname = (parsed.hostname or "").casefold().rstrip(".")
@@ -44,6 +48,19 @@ def clear_stale_company_import_state(
     source_url = state.get("import_preview_source_url")
     if source_url is not None and source_url != normalized_source_url(current_url):
         clear_company_import_state(state)
+
+
+def clear_stale_duplicate_state(
+    state: MutableMapping[str, Any], current_position: str
+) -> None:
+    pending = state.get("company_import_pending")
+    if not isinstance(pending, dict):
+        return
+    pending_position = str(pending.get("target_position") or "")
+    if normalized_target_position(pending_position) != normalized_target_position(
+        current_position
+    ):
+        state.pop("company_import_pending", None)
 
 
 def store_company_import_preview(

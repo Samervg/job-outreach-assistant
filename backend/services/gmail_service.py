@@ -467,6 +467,71 @@ def send_email(
     return GmailSendResult(message_id=message_id, thread_id=thread_id)
 
 
+def send_thread_follow_up(
+    *,
+    recipient: str,
+    subject: str,
+    body: str,
+    original_message_id: str,
+    thread_id: str,
+    service=None,
+    sender_email: str | None = None,
+) -> GmailSendResult:
+    try:
+        if service is None:
+            credentials = _load_credentials()
+            if credentials is None:
+                raise GmailNotConnectedError("Gmail hesabı bağlı değil.")
+            service = build(
+                "gmail", "v1", credentials=credentials, cache_discovery=False
+            )
+            sender_email = sender_email or _load_account_email()
+        if not sender_email:
+            raise GmailNotConnectedError("Bağlı Gmail adresi belirlenemedi.")
+
+        original = (
+            service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=original_message_id,
+                format="metadata",
+                metadataHeaders=["Message-ID"],
+            )
+            .execute()
+        )
+        verified_thread_id = str(original.get("threadId") or "").strip()
+        if not verified_thread_id or verified_thread_id != thread_id:
+            raise GmailSendError("Gmail konuşma kimliği gönderilen mesajla eşleşmiyor.")
+        internet_message_id = _header(original, "Message-ID")
+
+        message = EmailMessage()
+        message["From"] = sender_email
+        message["To"] = recipient
+        message["Subject"] = subject
+        if internet_message_id:
+            message["In-Reply-To"] = internet_message_id
+            message["References"] = internet_message_id
+        message.set_content(body)
+        encoded = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+        sent = (
+            service.users()
+            .messages()
+            .send(userId="me", body={"raw": encoded, "threadId": thread_id})
+            .execute()
+        )
+    except (GmailNotConnectedError, GmailSendError):
+        raise
+    except (HttpError, OSError, ValueError, TypeError) as error:
+        raise GmailSendError("Gmail follow-up e-postasını gönderemedi.") from error
+
+    sent_id = str(sent.get("id") or "").strip()
+    sent_thread_id = str(sent.get("threadId") or "").strip()
+    if not sent_id or sent_thread_id != thread_id:
+        raise GmailSendError("Gmail follow-up için geçerli aynı-thread sonucu döndürmedi.")
+    return GmailSendResult(message_id=sent_id, thread_id=sent_thread_id)
+
+
 def _header(message: dict, name: str) -> str | None:
     for header in message.get("payload", {}).get("headers", []):
         if str(header.get("name") or "").casefold() == name.casefold():

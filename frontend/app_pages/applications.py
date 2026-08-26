@@ -1,11 +1,19 @@
 import streamlit as st
 
+from application_state import application_metrics, should_show_ai_approval
 from api_client import (
+    analyze_application_reply,
+    decide_reply_analysis,
+    generate_follow_up_draft,
     get_application,
     get_application_reply_content,
+    get_follow_up_eligibility,
+    get_follow_up_settings,
     list_applications,
+    send_follow_up,
     sync_application_reply,
     update_application,
+    update_follow_up_settings,
 )
 
 
@@ -26,9 +34,49 @@ MANUAL_OPTIONS = {
     "rejected": ["rejected"],
     "offer": ["offer"],
 }
+CLASSIFICATION_LABELS = {
+    "positive_interest": "Olumlu ilgi",
+    "interview": "Mülakat",
+    "rejection": "Olumsuz",
+    "more_information": "Ek bilgi talebi",
+    "neutral": "Nötr",
+    "automated_reply": "Otomatik yanıt",
+    "unclear": "Belirsiz",
+}
 
 
 st.header("Başvurular")
+
+settings, settings_error = get_follow_up_settings()
+if settings_error:
+    st.warning(settings_error)
+else:
+    with st.expander("Follow-up ayarları"):
+        with st.form("follow_up_settings"):
+            settings_enabled = st.checkbox(
+                "Follow-up önerilerini etkinleştir",
+                value=settings["follow_up_enabled"],
+            )
+            settings_days = st.selectbox(
+                "Kaç gün sonra",
+                options=[3, 5, 7, 10, 14],
+                index=[3, 5, 7, 10, 14].index(settings["follow_up_after_days"]),
+            )
+            settings_max = st.selectbox(
+                "Maksimum follow-up",
+                options=[0, 1, 2],
+                index=[0, 1, 2].index(settings["max_follow_ups"]),
+            )
+            save_settings = st.form_submit_button("Ayarları kaydet")
+        if save_settings:
+            _, save_settings_error = update_follow_up_settings(
+                settings_enabled, settings_days, settings_max
+            )
+            if save_settings_error:
+                st.error(save_settings_error)
+            else:
+                st.success("Follow-up ayarları kaydedildi.")
+                st.rerun()
 
 all_applications, all_error = list_applications("all")
 if all_error:
@@ -36,15 +84,13 @@ if all_error:
     st.stop()
 
 all_applications = all_applications or []
-counts = {status: 0 for status in STATUS_LABELS if status != "all"}
-for application in all_applications:
-    counts[application["status"]] = counts.get(application["status"], 0) + 1
+counts = application_metrics(all_applications)
 
 first_metrics = st.columns(4)
-first_metrics[0].metric("Toplam", len(all_applications))
+first_metrics[0].metric("Toplam", counts["total"])
 first_metrics[1].metric("Taslak", counts["draft"])
-first_metrics[2].metric("Gönderildi", counts["sent"])
-first_metrics[3].metric("Yanıt geldi", counts["replied"])
+first_metrics[2].metric("Gönderilen", counts["sent_total"])
+first_metrics[3].metric("Yanıt gelen", counts["reply_total"])
 second_metrics = st.columns(3)
 second_metrics[0].metric("Mülakat", counts["interview"])
 second_metrics[1].metric("Olumsuz", counts["rejected"])
@@ -92,6 +138,9 @@ selected_id = st.selectbox(
     ),
     key="selected_application_id",
 )
+if st.session_state.get("follow_up_draft_application_id") != selected_id:
+    st.session_state.pop("follow_up_draft", None)
+    st.session_state["follow_up_draft_application_id"] = selected_id
 
 application, application_error = get_application(selected_id)
 if application_error:
@@ -166,6 +215,165 @@ if application.get("replied_at") and st.button(
                 key=f"reply_body_{selected_id}",
             )
 
+if application.get("replied_at"):
+    if st.button(
+        "Yanıtı analiz et",
+        icon=":material/psychology:",
+        key=f"analyze_reply_{selected_id}",
+    ):
+        with st.spinner("Yanıt yalnızca yerel Ollama ile değerlendiriliyor..."):
+            _, analysis_error = analyze_application_reply(selected_id)
+        if analysis_error:
+            st.error(analysis_error)
+        else:
+            st.success("Yanıt değerlendirildi; durum henüz değiştirilmedi.")
+            st.rerun()
+
+    if application.get("ai_reply_classification"):
+        with st.container(border=True):
+            classification = application["ai_reply_classification"]
+            suggested_status = {
+                "interview": "interview",
+                "rejection": "rejected",
+            }.get(classification, "replied")
+            st.write(
+                "**AI değerlendirmesi:** "
+                f"{CLASSIFICATION_LABELS.get(classification, classification)}"
+            )
+            st.write(
+                f"**Güven:** %{round((application.get('ai_reply_confidence') or 0) * 100)}"
+            )
+            st.write(f"**Neden:** {application.get('ai_reply_reason') or '—'}")
+            st.caption("AI yalnızca öneri sunar; başvuru durumunu kendisi değiştirmez.")
+
+            allowed_statuses = MANUAL_OPTIONS.get(
+                application["status"], [application["status"]]
+            )
+            show_approval = should_show_ai_approval(
+                application["status"], suggested_status, allowed_statuses
+            )
+            confirm_analysis = False
+            with st.container(horizontal=True):
+                if show_approval:
+                    confirm_analysis = st.button(
+                        f"Onayla ({STATUS_LABELS[suggested_status]})",
+                        key=f"confirm_analysis_{selected_id}",
+                        type="primary",
+                    )
+                ignore_analysis = st.button(
+                    "Yok say", key=f"ignore_analysis_{selected_id}"
+                )
+            if not show_approval:
+                st.caption(
+                    "AI önerisi mevcut durumla aynı; ayrıca onaylanması gerekmiyor."
+                )
+            if confirm_analysis or ignore_analysis:
+                action = "confirm" if confirm_analysis else "ignore"
+                _, decision_error = decide_reply_analysis(selected_id, action)
+                if decision_error:
+                    st.error(decision_error)
+                else:
+                    st.success(
+                        "Öneri onaylandı."
+                        if confirm_analysis
+                        else "Öneri yok sayıldı; durum değiştirilmedi."
+                    )
+                    st.rerun()
+
+            override_options = allowed_statuses
+            with st.form(f"analysis_override_{selected_id}"):
+                override_status = st.selectbox(
+                    "Farklı bir durum seç",
+                    options=override_options,
+                    format_func=lambda value: STATUS_LABELS[value],
+                )
+                override_submit = st.form_submit_button("Değiştir")
+            if override_submit:
+                _, override_error = decide_reply_analysis(
+                    selected_id, "change", override_status
+                )
+                if override_error:
+                    st.error(override_error)
+                else:
+                    st.success("Seçtiğiniz durum kaydedildi.")
+                    st.rerun()
+
+eligibility, eligibility_error = get_follow_up_eligibility(selected_id)
+if eligibility_error:
+    st.warning(eligibility_error)
+else:
+    if eligibility["eligible"]:
+        st.success("Follow-up uygun")
+    elif eligibility["reason_code"] == "waiting_period":
+        st.info(eligibility["reason"])
+    else:
+        st.caption(f"Follow-up önerilmiyor: {eligibility['reason']}")
+
+    if eligibility["eligible"]:
+        with st.container(horizontal=True):
+            create_follow_up = st.button(
+                "Follow-up taslağı oluştur",
+                icon=":material/edit_note:",
+                key=f"create_follow_up_{selected_id}",
+            )
+            regenerate_follow_up = st.button(
+                "Yeniden oluştur",
+                key=f"regenerate_follow_up_{selected_id}",
+                disabled="follow_up_draft" not in st.session_state,
+            )
+        if create_follow_up or regenerate_follow_up:
+            with st.spinner("Kısa follow-up taslağı yerel Ollama ile hazırlanıyor..."):
+                draft, draft_error = generate_follow_up_draft(selected_id)
+            if draft_error:
+                st.error(draft_error)
+                st.session_state.pop("follow_up_draft", None)
+            else:
+                st.session_state["follow_up_draft"] = draft
+
+        follow_up_draft = st.session_state.get("follow_up_draft")
+        if follow_up_draft:
+            with st.form(f"follow_up_review_{selected_id}"):
+                st.write(f"**Alıcı:** {follow_up_draft['recipient']}")
+                st.write(
+                    f"**Orijinal başvuru tarihi:** "
+                    f"{follow_up_draft['original_application_date']}"
+                )
+                st.write(
+                    f"**Önceki follow-up sayısı:** {follow_up_draft['follow_up_count']}"
+                )
+                follow_up_subject = st.text_input(
+                    "Konu", value=follow_up_draft["subject"], max_chars=300
+                )
+                follow_up_body = st.text_area(
+                    "Follow-up metni", value=follow_up_draft["body"], height=220
+                )
+                explicit_confirmation = st.checkbox(
+                    "Bu follow-up e-postasını şimdi göndermeyi onaylıyorum."
+                )
+                send_follow_up_submit = st.form_submit_button(
+                    "Onayla ve gönder",
+                    type="primary",
+                    disabled=not explicit_confirmation,
+                )
+                cancel_follow_up = st.form_submit_button("İptal")
+            if cancel_follow_up:
+                st.session_state.pop("follow_up_draft", None)
+                st.rerun()
+            if send_follow_up_submit:
+                with st.spinner("Gmail thread yeniden kontrol ediliyor..."):
+                    _, send_error = send_follow_up(
+                        selected_id,
+                        follow_up_subject,
+                        follow_up_body,
+                        True,
+                    )
+                if send_error:
+                    st.error(send_error)
+                else:
+                    st.session_state.pop("follow_up_draft", None)
+                    st.success("Follow-up aynı Gmail konuşmasında gönderildi.")
+                    st.rerun()
+
 with st.form(f"application_tracking_{selected_id}"):
     current_status = application["status"]
     status_options = MANUAL_OPTIONS.get(current_status, [current_status])
@@ -183,6 +391,10 @@ with st.form(f"application_tracking_{selected_id}"):
         height=140,
         placeholder="Örn. İlk görüşme 2 Eylül.",
     )
+    follow_up_disabled = st.checkbox(
+        "Bu başvuru için follow-up istemiyorum",
+        value=bool(application.get("follow_up_disabled")),
+    )
     submitted = st.form_submit_button("Takibi kaydet", type="primary")
 
 if submitted:
@@ -192,6 +404,7 @@ if submitted:
             tracked_status if tracked_status != current_status else None
         ),
         notes=notes,
+        follow_up_disabled=follow_up_disabled,
     )
     if update_error:
         st.error(update_error)

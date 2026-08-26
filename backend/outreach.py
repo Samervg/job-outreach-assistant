@@ -59,6 +59,14 @@ class DraftResponse(BaseModel):
     latest_reply_subject: str | None
     latest_reply_snippet: str | None
     reply_count: int
+    follow_up_disabled: bool
+    follow_up_count: int
+    last_follow_up_at: str | None
+    last_follow_up_gmail_message_id: str | None
+    ai_reply_classification: str | None
+    ai_reply_confidence: float | None
+    ai_reply_reason: str | None
+    ai_reply_analyzed_at: str | None
     notes: str
     created_at: str
     updated_at: str

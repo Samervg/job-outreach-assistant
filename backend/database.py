@@ -35,6 +35,15 @@ def _create_outreach_table(
             latest_reply_subject TEXT,
             latest_reply_snippet TEXT,
             reply_count INTEGER NOT NULL DEFAULT 0,
+            follow_up_disabled INTEGER NOT NULL DEFAULT 0
+                CHECK (follow_up_disabled IN (0, 1)),
+            follow_up_count INTEGER NOT NULL DEFAULT 0,
+            last_follow_up_at TEXT,
+            last_follow_up_gmail_message_id TEXT,
+            ai_reply_classification TEXT,
+            ai_reply_confidence REAL,
+            ai_reply_reason TEXT,
+            ai_reply_analyzed_at TEXT,
             notes TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -50,7 +59,10 @@ def _upgrade_outreach_table(connection: sqlite3.Connection) -> None:
     required_columns = {
         "sent_at", "gmail_message_id", "gmail_thread_id", "error_message",
         "replied_at", "latest_reply_from", "latest_reply_subject",
-        "latest_reply_snippet", "reply_count", "notes",
+        "latest_reply_snippet", "reply_count", "follow_up_disabled",
+        "follow_up_count", "last_follow_up_at",
+        "last_follow_up_gmail_message_id", "ai_reply_classification",
+        "ai_reply_confidence", "ai_reply_reason", "ai_reply_analyzed_at", "notes",
     }
     table_sql_row = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'outreach'"
@@ -74,6 +86,19 @@ def _upgrade_outreach_table(connection: sqlite3.Connection) -> None:
     latest_reply_subject = "latest_reply_subject" if "latest_reply_subject" in columns else "NULL"
     latest_reply_snippet = "latest_reply_snippet" if "latest_reply_snippet" in columns else "NULL"
     reply_count = "reply_count" if "reply_count" in columns else "0"
+    follow_up_disabled = "follow_up_disabled" if "follow_up_disabled" in columns else "0"
+    follow_up_count = "follow_up_count" if "follow_up_count" in columns else "0"
+    last_follow_up_at = "last_follow_up_at" if "last_follow_up_at" in columns else "NULL"
+    last_follow_up_gmail_message_id = (
+        "last_follow_up_gmail_message_id"
+        if "last_follow_up_gmail_message_id" in columns else "NULL"
+    )
+    ai_reply_classification = (
+        "ai_reply_classification" if "ai_reply_classification" in columns else "NULL"
+    )
+    ai_reply_confidence = "ai_reply_confidence" if "ai_reply_confidence" in columns else "NULL"
+    ai_reply_reason = "ai_reply_reason" if "ai_reply_reason" in columns else "NULL"
+    ai_reply_analyzed_at = "ai_reply_analyzed_at" if "ai_reply_analyzed_at" in columns else "NULL"
     notes = "notes" if "notes" in columns else "''"
     connection.execute(
         f"""
@@ -81,13 +106,19 @@ def _upgrade_outreach_table(connection: sqlite3.Connection) -> None:
             id, company_id, company_name, recipient_email, position,
             subject, body, status, sent_at, gmail_message_id, gmail_thread_id,
             error_message, replied_at, latest_reply_from, latest_reply_subject,
-            latest_reply_snippet, reply_count, notes, created_at, updated_at
+            latest_reply_snippet, reply_count, follow_up_disabled,
+            follow_up_count, last_follow_up_at, last_follow_up_gmail_message_id,
+            ai_reply_classification, ai_reply_confidence, ai_reply_reason,
+            ai_reply_analyzed_at, notes, created_at, updated_at
         )
         SELECT
             id, company_id, company_name, recipient_email, position,
             subject, body, status, {sent_at}, {gmail_message_id}, {gmail_thread_id},
             {error_message}, {replied_at}, {latest_reply_from},
             {latest_reply_subject}, {latest_reply_snippet}, {reply_count},
+            {follow_up_disabled}, {follow_up_count}, {last_follow_up_at},
+            {last_follow_up_gmail_message_id}, {ai_reply_classification},
+            {ai_reply_confidence}, {ai_reply_reason}, {ai_reply_analyzed_at},
             {notes}, created_at, updated_at
         FROM outreach
         """
@@ -174,5 +205,27 @@ def initialize_database() -> None:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
             )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS follow_up_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                follow_up_enabled INTEGER NOT NULL DEFAULT 1
+                    CHECK (follow_up_enabled IN (0, 1)),
+                follow_up_after_days INTEGER NOT NULL DEFAULT 7
+                    CHECK (follow_up_after_days IN (3, 5, 7, 10, 14)),
+                max_follow_ups INTEGER NOT NULL DEFAULT 1
+                    CHECK (max_follow_ups IN (0, 1, 2)),
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO follow_up_settings (
+                id, follow_up_enabled, follow_up_after_days,
+                max_follow_ups, updated_at
+            ) VALUES (1, 1, 7, 1, datetime('now'))
             """
         )

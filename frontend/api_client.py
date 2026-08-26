@@ -162,12 +162,16 @@ def import_company_preview(website: str) -> tuple[dict | None, str | None]:
 
 
 def check_company_duplicates(
-    name: str, website: str | None
+    name: str, website: str | None, target_position: str
 ) -> tuple[list[dict] | None, str | None]:
     try:
         response = requests.post(
             f"{BACKEND_URL}/companies/duplicate-check",
-            json={"name": name, "website": website},
+            json={
+                "name": name,
+                "website": website,
+                "target_position": target_position,
+            },
             timeout=10,
         )
         if not response.ok:
@@ -334,12 +338,15 @@ def update_application(
     *,
     application_status: str | None = None,
     notes: str | None = None,
+    follow_up_disabled: bool | None = None,
 ) -> tuple[dict | None, str | None]:
     payload = {}
     if application_status is not None:
         payload["status"] = application_status
     if notes is not None:
         payload["notes"] = notes
+    if follow_up_disabled is not None:
+        payload["follow_up_disabled"] = follow_up_disabled
 
     try:
         response = requests.patch(
@@ -382,3 +389,117 @@ def get_application_reply_content(
         return response.json(), None
     except (requests.RequestException, ValueError):
         return None, "Gmail yanıt içeriği alınırken backend bağlantısı başarısız oldu."
+
+
+def analyze_application_reply(
+    application_id: int,
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/applications/{application_id}/reply-analysis",
+            timeout=150,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Yanıt analiz edilirken backend bağlantısı başarısız oldu."
+
+
+def decide_reply_analysis(
+    application_id: int,
+    action: str,
+    application_status: str | None = None,
+) -> tuple[dict | None, str | None]:
+    payload = {"action": action}
+    if application_status is not None:
+        payload["status"] = application_status
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/applications/{application_id}/reply-analysis/decision",
+            json=payload,
+            timeout=10,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Yanıt değerlendirmesi kaydedilirken bağlantı başarısız oldu."
+
+
+def get_follow_up_settings() -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/applications/follow-up/settings", timeout=10
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Follow-up ayarları alınamadı."
+
+
+def update_follow_up_settings(
+    enabled: bool, after_days: int, max_follow_ups: int
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.put(
+            f"{BACKEND_URL}/applications/follow-up/settings",
+            json={
+                "follow_up_enabled": enabled,
+                "follow_up_after_days": after_days,
+                "max_follow_ups": max_follow_ups,
+            },
+            timeout=10,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Follow-up ayarları kaydedilemedi."
+
+
+def get_follow_up_eligibility(
+    application_id: int,
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/applications/{application_id}/follow-up-eligibility",
+            timeout=10,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Follow-up uygunluğu alınamadı."
+
+
+def generate_follow_up_draft(
+    application_id: int,
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/applications/{application_id}/follow-up-draft",
+            timeout=150,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Follow-up taslağı oluşturulamadı."
+
+
+def send_follow_up(
+    application_id: int, subject: str, body: str, confirm_send: bool
+) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}/applications/{application_id}/follow-up-send",
+            json={"subject": subject, "body": body, "confirm_send": confirm_send},
+            timeout=60,
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Follow-up gönderilirken backend bağlantısı başarısız oldu."

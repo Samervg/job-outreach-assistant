@@ -75,6 +75,15 @@ class CompanyImportPreview(BaseModel):
 class DuplicateCheckRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     website: str | None = Field(default=None, max_length=2000)
+    target_position: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name", "target_position")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Bu alan boş bırakılamaz.")
+        return value
 
 
 class DuplicateCheckResponse(BaseModel):
@@ -174,6 +183,10 @@ def _normalized_name(value: str) -> str:
     return re.sub(r"[^\w]+", "", value.casefold())
 
 
+def _normalized_position(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
 def _website_domain(value: str | None) -> str | None:
     if not value:
         return None
@@ -199,6 +212,7 @@ def check_company_duplicate(
 ) -> DuplicateCheckResponse:
     requested_name = _normalized_name(request.name)
     requested_domain = _website_domain(request.website)
+    requested_position = _normalized_position(request.target_position)
     with get_connection() as connection:
         rows = connection.execute(
             "SELECT * FROM companies ORDER BY name COLLATE NOCASE, id"
@@ -206,11 +220,14 @@ def check_company_duplicate(
     duplicates = [
         _row_to_company(row)
         for row in rows
-        if _normalized_name(row["name"]) == requested_name
-        or (
-            requested_domain is not None
-            and _website_domain(row["website"]) == requested_domain
+        if (
+            _normalized_name(row["name"]) == requested_name
+            or (
+                requested_domain is not None
+                and _website_domain(row["website"]) == requested_domain
+            )
         )
+        and _normalized_position(row["target_position"]) == requested_position
     ]
     return DuplicateCheckResponse(duplicates=duplicates)
 

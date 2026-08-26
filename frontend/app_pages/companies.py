@@ -12,6 +12,7 @@ from api_client import (
 )
 from company_import_state import (
     clear_company_import_state,
+    clear_stale_duplicate_state,
     clear_stale_company_import_state,
     current_company_import_preview,
     store_company_import_preview,
@@ -121,8 +122,13 @@ if preview:
             "contact_email": import_email,
             "target_position": import_position_override.strip() or selected_position,
         }
+        clear_stale_duplicate_state(
+            st.session_state, company_data["target_position"]
+        )
         duplicates, duplicate_error = check_company_duplicates(
-            company_data["name"], company_data["website"]
+            company_data["name"],
+            company_data["website"],
+            company_data["target_position"],
         )
         if duplicate_error:
             st.error(duplicate_error)
@@ -130,6 +136,7 @@ if preview:
             st.session_state["company_import_pending"] = {
                 "company": company_data,
                 "duplicates": duplicates,
+                "target_position": company_data["target_position"],
             }
             st.warning("Benzer bir şirket zaten kayıtlı. Güncelleme veya iptal seçin.")
             st.rerun()
