@@ -10,6 +10,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from backend.application_semantics import FILTER_SQL, FILTER_STATUSES
 from backend.database import get_connection
 from backend.outreach import DraftResponse, _row_to_draft
+from backend.status_history import (
+    add_status_history,
+    is_correction_target,
+    status_history_rows,
+)
 from backend.services.gmail_service import (
     GmailNotConnectedError,
     GmailReadError,
@@ -59,6 +64,16 @@ class ApplicationUpdate(BaseModel):
         ):
             raise ValueError("Durum veya not alanlarından en az biri gereklidir.")
         return self
+
+
+class StatusHistoryResponse(BaseModel):
+    id: int
+    application_id: int
+    from_status: ApplicationStatus | None
+    to_status: ApplicationStatus
+    source: Literal["system", "gmail", "user", "ai_confirmed", "user_correction"]
+    note: str
+    changed_at: str
 
 
 class ReplySyncResponse(BaseModel):
@@ -189,6 +204,16 @@ def _persist_reply_result(application_id: int, current_status: str, result) -> N
                 application_id,
             ),
         )
+        if next_status != current_status:
+            add_status_history(
+                connection,
+                application_id,
+                current_status,
+                next_status,
+                "gmail",
+                "Gmail yanıtı tespit edildi.",
+                now,
+            )
 
 
 @router.get("/follow-up/settings", response_model=FollowUpSettingsResponse)
@@ -250,16 +275,31 @@ def get_application(application_id: int) -> DraftResponse:
     return _row_to_draft(_get_application(application_id))
 
 
+@router.get(
+    "/{application_id}/history", response_model=list[StatusHistoryResponse]
+)
+def get_application_history(application_id: int) -> list[StatusHistoryResponse]:
+    _get_application(application_id)
+    with get_connection() as connection:
+        rows = status_history_rows(connection, application_id)
+    return [StatusHistoryResponse(**dict(row)) for row in rows]
+
+
 @router.patch("/{application_id}", response_model=DraftResponse)
 def update_application(
     application_id: int, update: ApplicationUpdate
 ) -> DraftResponse:
     current = _get_application(application_id)
     next_status = update.status or current["status"]
+    correction = False
 
     if update.status is not None and update.status != current["status"]:
         allowed = MANUAL_TRANSITIONS.get(current["status"], set())
-        if update.status not in allowed:
+        with get_connection() as connection:
+            correction = is_correction_target(
+                connection, application_id, update.status
+            )
+        if update.status not in allowed and not correction:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
@@ -284,6 +324,20 @@ def update_application(
             """,
             (next_status, notes, follow_up_disabled, now, application_id),
         )
+        if next_status != current["status"]:
+            add_status_history(
+                connection,
+                application_id,
+                current["status"],
+                next_status,
+                "user_correction" if correction else "user",
+                (
+                    "Kullanıcı önceki durum seçimini düzeltti."
+                    if correction
+                    else "Kullanıcı durumu manuel güncelledi."
+                ),
+                now,
+            )
         row = connection.execute(
             "SELECT * FROM outreach WHERE id = ?", (application_id,)
         ).fetchone()
@@ -461,7 +515,11 @@ def decide_reply_analysis(
         )
     if selected_status != current["status"]:
         allowed = MANUAL_TRANSITIONS.get(current["status"], set())
-        if selected_status not in allowed:
+        with get_connection() as connection:
+            correction = is_correction_target(
+                connection, application_id, selected_status
+            )
+        if selected_status not in allowed and not correction:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Seçilen durum geçişine izin verilmiyor.",
@@ -471,6 +529,23 @@ def decide_reply_analysis(
             connection.execute(
                 "UPDATE outreach SET status = ?, updated_at = ? WHERE id = ?",
                 (selected_status, now, application_id),
+            )
+            source = "ai_confirmed" if decision.action == "confirm" else (
+                "user_correction" if correction else "user"
+            )
+            note = {
+                "ai_confirmed": "AI önerisi kullanıcı tarafından onaylandı.",
+                "user_correction": "Kullanıcı önceki durum seçimini düzeltti.",
+                "user": "Kullanıcı durumu manuel güncelledi.",
+            }[source]
+            add_status_history(
+                connection,
+                application_id,
+                current["status"],
+                selected_status,
+                source,
+                note,
+                now,
             )
     return get_application(application_id)
 

@@ -185,6 +185,37 @@ def initialize_database() -> None:
         _upgrade_outreach_table(connection)
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS application_status_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_id INTEGER NOT NULL,
+                from_status TEXT,
+                to_status TEXT NOT NULL,
+                source TEXT NOT NULL CHECK (source IN (
+                    'system', 'gmail', 'user', 'ai_confirmed', 'user_correction'
+                )),
+                note TEXT NOT NULL DEFAULT '',
+                changed_at TEXT NOT NULL,
+                FOREIGN KEY (application_id) REFERENCES outreach(id) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO application_status_history (
+                application_id, from_status, to_status, source, note, changed_at
+            )
+            SELECT
+                outreach.id, NULL, outreach.status, 'system',
+                'Mevcut kayıt history sistemine aktarıldı.', datetime('now')
+            FROM outreach
+            WHERE NOT EXISTS (
+                SELECT 1 FROM application_status_history
+                WHERE application_status_history.application_id = outreach.id
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE IF NOT EXISTS cv_analysis (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 cv_file_path TEXT NOT NULL,

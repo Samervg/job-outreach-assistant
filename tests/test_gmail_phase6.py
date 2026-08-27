@@ -447,6 +447,11 @@ class SendDraftTests(unittest.TestCase):
         self.assertEqual(result.gmail_message_id, "gmail-42")
         self.assertEqual(result.gmail_thread_id, "thread-42")
         self.assertIsNone(result.error_message)
+        with database.get_connection() as connection:
+            history = connection.execute(
+                "SELECT from_status, to_status, source FROM application_status_history WHERE application_id=1"
+            ).fetchall()
+        self.assertEqual([tuple(row) for row in history], [("draft", "sent", "gmail")])
         sender.assert_called_once()
         with patch.object(gmail_router, "send_email") as second_sender:
             with self.assertRaises(HTTPException) as context:
@@ -473,6 +478,11 @@ class SendDraftTests(unittest.TestCase):
         self.assertEqual(row["error_message"], "Mock Gmail failure")
         self.assertIsNone(row["sent_at"])
         self.assertIsNone(row["gmail_message_id"])
+        with database.get_connection() as connection:
+            history = connection.execute(
+                "SELECT to_status, source FROM application_status_history WHERE application_id=1"
+            ).fetchall()
+        self.assertNotIn(("sent", "gmail"), [tuple(item) for item in history])
         retried, _ = self._send()
         self.assertEqual(retried.status, "sent")
 

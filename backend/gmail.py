@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from backend.config import FRONTEND_URL, PROJECT_ROOT, UPLOAD_DIR
 from backend.database import get_connection
 from backend.outreach import DraftResponse, _row_to_draft
+from backend.status_history import add_status_history
 from backend.services.gmail_service import (
     GmailConfigurationError,
     GmailConnectionStatus,
@@ -109,7 +110,10 @@ def gmail_auth_callback(
 def _mark_failed(draft_id: int, error_message: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with get_connection() as connection:
-        connection.execute(
+        current = connection.execute(
+            "SELECT status FROM outreach WHERE id = ?", (draft_id,)
+        ).fetchone()
+        cursor = connection.execute(
             """
             UPDATE outreach
             SET status = 'failed', sent_at = NULL, gmail_message_id = NULL,
@@ -118,6 +122,16 @@ def _mark_failed(draft_id: int, error_message: str) -> None:
             """,
             (error_message[:1000], now, draft_id),
         )
+        if current is not None and cursor.rowcount and current["status"] != "failed":
+            add_status_history(
+                connection,
+                draft_id,
+                current["status"],
+                "failed",
+                "gmail",
+                "Gmail gönderimi başarısız oldu.",
+                now,
+            )
 
 
 @router.post("/drafts/{draft_id}/send", response_model=DraftResponse)
@@ -229,7 +243,7 @@ def send_draft(draft_id: int, request: SendDraftRequest) -> DraftResponse:
 
         now = datetime.now(timezone.utc).isoformat()
         with get_connection() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE outreach
                 SET status = 'sent', sent_at = ?, gmail_message_id = ?,
@@ -238,6 +252,16 @@ def send_draft(draft_id: int, request: SendDraftRequest) -> DraftResponse:
                 """,
                 (now, message_id, thread_id, now, draft_id),
             )
+            if cursor.rowcount:
+                add_status_history(
+                    connection,
+                    draft_id,
+                    draft["status"],
+                    "sent",
+                    "gmail",
+                    "Gmail üzerinden gönderildi.",
+                    now,
+                )
             sent_row = connection.execute(
                 "SELECT * FROM outreach WHERE id = ?", (draft_id,)
             ).fetchone()

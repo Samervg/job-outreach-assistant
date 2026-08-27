@@ -66,12 +66,19 @@ class Phase7MigrationTests(unittest.TestCase):
                     integrity = migrated.execute(
                         "PRAGMA integrity_check"
                     ).fetchone()[0]
+                    history = migrated.execute(
+                        "SELECT * FROM application_status_history WHERE application_id = 7"
+                    ).fetchall()
 
             self.assertEqual(row["status"], "sent")
             self.assertEqual(row["sent_at"], "2026-08-25T10:00:00+00:00")
             self.assertEqual(row["gmail_message_id"], "gmail-real-id")
             self.assertIsNone(row["error_message"])
             self.assertEqual(row["notes"], "")
+            self.assertEqual(len(history), 1)
+            self.assertIsNone(history[0]["from_status"])
+            self.assertEqual(history[0]["to_status"], "sent")
+            self.assertEqual(history[0]["source"], "system")
             self.assertEqual(integrity, "ok")
 
 
@@ -135,6 +142,15 @@ class Phase7ApplicationTests(unittest.TestCase):
             1, ApplicationUpdate(status="rejected")
         )
         self.assertEqual(rejected.status, "rejected")
+        history = applications.get_application_history(1)
+        self.assertEqual(
+            [(item.from_status, item.to_status, item.source) for item in history],
+            [
+                ("sent", "replied", "user"),
+                ("replied", "interview", "user"),
+                ("interview", "rejected", "user"),
+            ],
+        )
 
     def test_manual_interview_to_offer(self):
         self._set_status("interview")

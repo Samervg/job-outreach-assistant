@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from backend.config import OLLAMA_MODEL
 from backend.database import get_connection
+from backend.status_history import add_status_history
 from backend.services.cv_parser import (
     CVAnalysis,
     CVAnalysisError,
@@ -241,6 +242,15 @@ def generate_draft(request: DraftGenerateRequest) -> DraftResponse:
                 now,
                 now,
             ),
+        )
+        add_status_history(
+            connection,
+            cursor.lastrowid,
+            None,
+            "draft",
+            "system",
+            "Başvuru oluşturuldu.",
+            now,
         )
         row = connection.execute(
             "SELECT * FROM outreach WHERE id = ?", (cursor.lastrowid,)

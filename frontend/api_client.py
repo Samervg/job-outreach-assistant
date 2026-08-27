@@ -333,6 +333,20 @@ def get_application(application_id: int) -> tuple[dict | None, str | None]:
         return None, "Başvuru backend'den alınamadı."
 
 
+def get_application_history(
+    application_id: int,
+) -> tuple[list[dict] | None, str | None]:
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/applications/{application_id}/history", timeout=10
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Başvuru durum geçmişi backend'den alınamadı."
+
+
 def update_application(
     application_id: int,
     *,

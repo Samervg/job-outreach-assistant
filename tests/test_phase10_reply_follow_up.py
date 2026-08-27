@@ -474,6 +474,9 @@ class Phase10EndpointTests(unittest.TestCase):
         self.assertEqual(ignored.status, "replied")
         confirmed = applications.decide_reply_analysis(2, ReplyAnalysisDecision(action="confirm"))
         self.assertEqual(confirmed.status, "interview")
+        self.assertEqual(
+            applications.get_application_history(2)[-1].source, "ai_confirmed"
+        )
 
         with database.get_connection() as connection:
             connection.execute(

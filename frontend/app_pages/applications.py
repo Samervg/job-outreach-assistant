@@ -6,6 +6,7 @@ from api_client import (
     decide_reply_analysis,
     generate_follow_up_draft,
     get_application,
+    get_application_history,
     get_application_reply_content,
     get_follow_up_eligibility,
     get_follow_up_settings,
@@ -42,6 +43,13 @@ CLASSIFICATION_LABELS = {
     "neutral": "Nötr",
     "automated_reply": "Otomatik yanıt",
     "unclear": "Belirsiz",
+}
+HISTORY_SOURCE_LABELS = {
+    "system": "Sistem",
+    "gmail": "Gmail",
+    "user": "Kullanıcı",
+    "ai_confirmed": "AI önerisi onayı",
+    "user_correction": "Kullanıcı düzeltmesi",
 }
 
 
@@ -147,6 +155,9 @@ if application_error:
     st.error(application_error)
     st.stop()
 
+history, history_error = get_application_history(selected_id)
+history = history or []
+
 with st.container(border=True):
     st.write(f"**Şirket:** {application['company_name']}")
     st.write(f"**Pozisyon:** {application['position']}")
@@ -170,6 +181,25 @@ with st.container(border=True):
         st.caption(f"Tespit edilen dış yanıt: {application.get('reply_count', 0)}")
     if application.get("error_message"):
         st.error(f"Gönderim hatası: {application['error_message']}")
+
+with st.expander("Durum Geçmişi"):
+    if history_error:
+        st.warning(history_error)
+    elif not history:
+        st.caption("Bu başvuru için durum geçmişi bulunmuyor.")
+    else:
+        for event in history:
+            from_label = (
+                STATUS_LABELS.get(event["from_status"], event["from_status"])
+                if event.get("from_status")
+                else "Başlangıç"
+            )
+            to_label = STATUS_LABELS.get(event["to_status"], event["to_status"])
+            st.write(f"**{event['changed_at']}** · {from_label} → {to_label}")
+            st.caption(
+                f"{HISTORY_SOURCE_LABELS.get(event['source'], event['source'])} · "
+                f"{event['note']}"
+            )
 
 eligible_for_reply_sync = (
     application["status"] in {"sent", "replied", "interview", "rejected", "offer"}
@@ -376,7 +406,16 @@ else:
 
 with st.form(f"application_tracking_{selected_id}"):
     current_status = application["status"]
-    status_options = MANUAL_OPTIONS.get(current_status, [current_status])
+    status_options = list(MANUAL_OPTIONS.get(current_status, [current_status]))
+    previously_reached = [
+        event["to_status"]
+        for event in history
+        if event["to_status"] != current_status
+        and event["to_status"] in {"sent", "replied", "interview", "rejected", "offer"}
+    ]
+    for previous_status in previously_reached:
+        if previous_status not in status_options:
+            status_options.append(previous_status)
     tracked_status = st.selectbox(
         "Başvuru durumu",
         options=status_options,

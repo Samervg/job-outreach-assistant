@@ -189,6 +189,11 @@ class ReplySyncEndpointTests(unittest.TestCase):
         self.assertTrue(response.has_reply)
         self.assertEqual(response.application.status, "replied")
         self.assertEqual(response.application.reply_count, 1)
+        history = applications.get_application_history(1)
+        self.assertEqual(
+            (history[-1].from_status, history[-1].to_status, history[-1].source),
+            ("sent", "replied", "gmail"),
+        )
         database.initialize_database()
         loaded = applications.get_application(1)
         self.assertEqual(loaded.status, "replied")
