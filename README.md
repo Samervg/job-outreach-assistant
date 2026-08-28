@@ -1,169 +1,407 @@
-# Job Outreach Assistant — Phase 8
+# Job Outreach Assistant
 
-Yerelde çalışan, tek kullanıcıya yönelik iş başvurusu iletişim asistanı MVP'si.
+İş başvurusu sürecimi daha düzenli yönetmek ve aynı zamanda FastAPI, Streamlit, SQLite, Gmail API ve yerel LLM kullanımı konusunda kendimi geliştirmek için hazırladığım kişisel bir proje.
 
-Mevcut özellikler:
+Uygulama üzerinden şirketleri ve başvuruları takip edebiliyor, şirket web sitesinden temel bilgiler çıkarabiliyor, Ollama ile kişiselleştirilmiş başvuru e-postaları oluşturabiliyor ve Gmail üzerinden gönderim yapabiliyorum.
+
+Gönderilen başvuruların yanıtları da Gmail üzerinden takip edilebiliyor. Gelen yanıtlar yerel model ile analiz edilebiliyor ve gerektiğinde kullanıcı onayıyla follow-up e-postası hazırlanabiliyor.
+
+Proje şu anda yerel ve tek kullanıcıya yönelik çalışıyor.
+
+## Özellikler
 
 - Profil ve PDF CV yönetimi
-- Manuel şirket yönetimi
-- Yerel Ollama modeliyle kişiselleştirilmiş e-posta taslağı üretimi
-- PDF CV analizi ve hedef pozisyona uygun kanıt seçimi
-- Taslakları görüntüleme, düzenleme ve SQLite'a kaydetme
-- Tek bir Gmail hesabını OAuth 2.0 ile bağlama
-- Açık kullanıcı onayından sonra tek taslağı aktif PDF CV ile gönderme
-- Başvuru geçmişini durumlara göre görüntüleme ve filtreleme
-- Gönderim sonrası manuel durum takibi ve özel notlar
-- Şirket web sitesinden güvenli, düzenlenebilir şirket önizlemesi oluşturma
-- Güvenli SQLite bağlantı ve transaction yönetimi
+- PDF CV analizi
+- Şirket ve pozisyon yönetimi
+- Şirket web sitesinden bilgi ve açık pozisyon çıkarma
+- Ollama ile kişiselleştirilmiş başvuru e-postası oluşturma
+- Taslakları düzenleme ve kaydetme
+- Gmail OAuth 2.0 bağlantısı
+- Kullanıcı onayıyla Gmail üzerinden e-posta gönderme
+- Gönderilen başvuruların Gmail konuşmalarını takip etme
+- Gelen yanıt içeriğini görüntüleme
+- Ollama ile gelen yanıtı analiz etme
+- Yanıt durumuna göre kullanıcıya durum değişikliği önerme
+- Güvenli follow-up taslağı oluşturma ve gönderme
+- Başvuru durum geçmişini takip etme
+- Başvuru istatistikleri ve dönüşüm oranları
+- Duruma göre başvuru filtreleme
+- Başvurulara özel not ekleme
+- Draft ve failed durumundaki başvuruları güvenli şekilde silme
+- SQLite üzerinde transaction ve durum geçmişi yönetimi
 
-Toplu gönderim, otomatik takip, zamanlama, scraping, şirket keşfi ve gelen kutusu
-okuma bulunmaz.
+AI tarafından yapılan durum değerlendirmeleri otomatik olarak uygulanmaz. Son karar kullanıcıya bırakılır.
 
-## Gereksinimler
+## Kullanılan Teknolojiler
 
-- Python 3.10 veya daha yeni bir sürüm
-- Windows PowerShell
-- Yerel [Ollama](https://ollama.com/download/windows) kurulumu
+- **Python**
+- **FastAPI** — backend ve REST API
+- **Streamlit** — kullanıcı arayüzü
+- **SQLite** — yerel veritabanı
+- **Ollama / Qwen3:4b** — yerel LLM
+- **Gmail API** — e-posta gönderme ve yanıt takibi
+- **OAuth 2.0** — Gmail yetkilendirmesi
+- **Pytest** — testler
 
-## Ollama kurulumu
+Uygulamanın genel yapısı:
 
-Ollama'yı Windows Package Manager ile kurun:
+```text
+Streamlit
+    ↓
+FastAPI REST API
+    ↓
+Service katmanı
+    ↓
+SQLite / Gmail API / Ollama / şirket web siteleri
+```
+
+Streamlit veritabanına doğrudan erişmez. Frontend işlemleri FastAPI üzerinden gerçekleştirir.
+
+## Ollama Kurulumu
+
+Ollama'yı Windows Package Manager ile kurabilirsiniz:
 
 ```powershell
 winget install --id Ollama.Ollama -e
 ```
 
-Alternatif olarak resmi Windows kurulum dosyasını `https://ollama.com/download/windows` adresinden indirebilirsiniz.
+Alternatif olarak Ollama'nın resmi sitesinden Windows kurulum dosyası kullanılabilir.
 
-Varsayılan geliştirme modelini indirin:
+Varsayılan olarak projede `qwen3:4b` kullanıyorum:
 
 ```powershell
 ollama pull qwen3:4b
 ```
 
-Ollama otomatik başlamadıysa ayrı bir terminalde çalıştırın:
+Ollama otomatik başlamadıysa:
 
 ```powershell
 ollama serve
 ```
 
-Kurulu modelleri ve Ollama API'sini kontrol edin:
+Kurulu modelleri kontrol etmek için:
 
 ```powershell
 ollama list
-Invoke-RestMethod http://127.0.0.1:11434/api/tags
 ```
 
-`qwen3:4b`, daha büyük modellere göre yerel geliştirme için daha ulaşılabilir bir 4B modelidir ve talimat takip yeteneği bu MVP'nin kısa, yapılandırılmış e-posta üretimi için uygundur. Model `.env` üzerinden değiştirilebilir; uygulama modeli otomatik indirmez.
+Model `.env` dosyası üzerinden değiştirilebilir. Uygulama modeli otomatik olarak indirmez.
 
-## Gmail OAuth kurulumu
+## Gmail OAuth Kurulumu
 
-1. [Google Cloud Console](https://console.cloud.google.com/) içinde bir proje oluşturun
-   veya mevcut bir projeyi seçin.
-2. API Library bölümünden Gmail API'yi etkinleştirin.
-3. Google Auth Platform bölümünde uygulama bilgilerini ve OAuth izin ekranını
-   yapılandırın. Uygulama test modundaysa gönderecek Gmail hesabını test kullanıcısı
-   olarak ekleyin. **Data Access** bölümüne yalnızca
-   `https://www.googleapis.com/auth/gmail.send`,
-   `https://www.googleapis.com/auth/gmail.readonly`, `openid` ve `email`
-   izinlerini ekleyin.
-4. OAuth Client oluştururken **Web application** türünü seçin. Yetkilendirilmiş
-   yönlendirme URI'si olarak tam şu adresi ekleyin:
-   `http://127.0.0.1:8000/gmail/auth/callback`
-5. İndirilen istemci JSON dosyasını proje içinde
-   `credentials/client_secret.json` konumuna koyun.
-6. Farklı bir konum veya port kullanacaksanız `.env` içindeki
-   `GMAIL_CLIENT_SECRET_PATH`, `GMAIL_REDIRECT_URI` ve `FRONTEND_URL` değerlerini
-   güncelleyin. Google Cloud'daki yönlendirme URI'si `.env` ile birebir aynı olmalıdır.
-7. FastAPI ve Streamlit'i başlatın. Yeni Başvuru sayfasındaki **Gmail hesabını
-   bağla** düğmesine basın, Google onayını tamamlayın ve uygulamaya dönün.
+1. Google Cloud Console üzerinden yeni bir proje oluşturun veya mevcut bir projeyi seçin.
+2. Gmail API'yi etkinleştirin.
+3. Google Auth Platform üzerinden OAuth izin ekranını yapılandırın.
+4. Uygulama test modundaysa kullanılacak Gmail hesabını test kullanıcısı olarak ekleyin.
+5. Data Access bölümünde şu izinleri ekleyin:
 
-Uygulama Gmail için gönderme ve salt okunur erişim kapsamlarını ister. Salt okunur
-erişim genel bir gelen kutusu okuyucusu olarak kullanılmaz; yalnızca mevcut bir
-başvurunun kayıtlı Gmail mesajından doğrulanan konuşma, açık kullanıcı isteğiyle
-okunur. Bağlantılı hesap adresini göstermek için ayrıca standart OpenID/e-posta
-kimlik izinleri kullanılır. İstemci sırrı, erişim/yenileme tokenları ve bağlı hesap
-bilgisi yalnızca yerel `credentials/` klasöründe tutulur ve Git tarafından yok
-sayılır.
+```text
+https://www.googleapis.com/auth/gmail.send
+https://www.googleapis.com/auth/gmail.readonly
+openid
+email
+```
 
-Yerel callback HTTP kullandığı için `.env.example` içinde
-`ALLOW_INSECURE_OAUTH_LOOPBACK=true` bulunur. Bu ayar OAuthLib'in HTTP istisnasını
-yalnızca `127.0.0.1`, `localhost` veya `::1` callback adreslerinde kaldırır. Public
-veya deploy edilmiş bir uygulamada bu ayar kullanılmamalı; callback HTTPS olmalı ve
-değer `false` yapılmalıdır. Uygulama public bir HTTP host için bu ayarı reddeder.
+6. OAuth Client oluştururken **Web application** seçin.
 
-## Uygulama kurulumu
+Redirect URI:
 
-Projeyi yeni bilgisayara klonlayın:
+```text
+http://127.0.0.1:8000/gmail/auth/callback
+```
+
+7. İndirilen client secret dosyasını şu konuma koyun:
+
+```text
+credentials/client_secret.json
+```
+
+Gmail tokenları, client secret ve bağlantılı hesap bilgileri yalnızca yerel `credentials/` klasöründe tutulur. Bu klasör Git tarafından takip edilmez.
+
+`gmail.readonly` izni genel bir gelen kutusu okuyucusu oluşturmak için kullanılmıyor. Uygulama yalnızca mevcut bir başvuruyla ilişkili Gmail konuşmasını kullanıcı isteğiyle kontrol ediyor.
+
+Yerel OAuth callback'i HTTP kullandığı için geliştirme ortamında:
+
+```dotenv
+ALLOW_INSECURE_OAUTH_LOOPBACK=true
+```
+
+kullanılıyor.
+
+Bu ayar yalnızca localhost/loopback geliştirme ortamı içindir. Public bir deployment durumunda HTTPS kullanılmalıdır.
+
+## Projenin Kurulumu
+
+Projeyi klonlayın:
 
 ```powershell
 Set-Location "$env:USERPROFILE\Desktop"
+
 git clone https://github.com/Samervg/job-outreach-assistant.git
+
 cd job-outreach-assistant
 ```
 
-Sanal ortamı oluşturun, etkinleştirin ve bağımlılıkları kurun:
+Sanal ortam oluşturun:
 
 ```powershell
 python -m venv .venv
+
 .\.venv\Scripts\Activate.ps1
+```
+
+Bağımlılıkları yükleyin:
+
+```powershell
 python -m pip install --upgrade pip
+
 pip install -r requirements.txt
+```
+
+Örnek environment dosyasını kopyalayın:
+
+```powershell
 Copy-Item .env.example .env
 ```
 
-`.venv`, `.env`, SQLite veritabanı ve yüklenen CV dosyaları GitHub'dan gelmez. Yeni bilgisayarda ortam ve kişisel veriler yerel olarak yeniden oluşturulmalıdır.
-
-`.env` içindeki Ollama ayarları:
+Temel `.env` ayarları:
 
 ```dotenv
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen3:4b
+
 GMAIL_CLIENT_SECRET_PATH=credentials/client_secret.json
 GMAIL_REDIRECT_URI=http://127.0.0.1:8000/gmail/auth/callback
+
 ALLOW_INSECURE_OAUTH_LOOPBACK=true
+
 FRONTEND_URL=http://localhost:8501
 ```
 
-Farklı bir model seçerseniz önce modeli indirin ve `.env` değerini aynı adla güncelleyin:
+`.venv`, `.env`, SQLite veritabanı, Gmail credentials/token dosyaları ve yüklenen CV dosyaları GitHub'a gönderilmez.
 
-```powershell
-ollama pull MODEL_ADI
-```
+## Uygulamayı Çalıştırma
 
-## Uygulamayı çalıştırma
-
-İlk PowerShell terminalinde backend'i başlatın:
+İlk terminalde FastAPI backend:
 
 ```powershell
 Set-Location "$env:USERPROFILE\Desktop\job-outreach-assistant"
+
 .\.venv\Scripts\Activate.ps1
+
 python -m uvicorn backend.main:app --reload
 ```
 
-İkinci PowerShell terminalinde frontend'i başlatın:
+İkinci terminalde Streamlit:
 
 ```powershell
 Set-Location "$env:USERPROFILE\Desktop\job-outreach-assistant"
+
 .\.venv\Scripts\Activate.ps1
+
 python -m streamlit run frontend\app.py
 ```
 
-Adresler:
+Uygulama:
 
-- Streamlit: http://localhost:8501
-- FastAPI dokümantasyonu: http://127.0.0.1:8000/docs
-- Ollama durumu: http://127.0.0.1:8000/ollama/status
-- Gmail durumu: http://127.0.0.1:8000/gmail/status
+```text
+http://localhost:8501
+```
 
-## Yerel veriler
+FastAPI Swagger dokümantasyonu:
 
-- SQLite veritabanı: `data/job_outreach.db`
-- Aktif CV: `data/uploads/`
+```text
+http://127.0.0.1:8000/docs
+```
 
-Streamlit SQLite'a doğrudan erişmez. Profil, şirket ve taslak işlemleri FastAPI üzerinden yapılır. Veritabanı, yüklemeler ve `.env` Git tarafından yok sayılır.
+Backend sağlık kontrolü:
 
-Gmail gönderiminde taslak, alıcı, konu, metin, aktif CV ve Gmail bağlantısı backend
-tarafında yeniden doğrulanır. İstek gövdesinde `confirm_send: true` yoksa gönderim
-reddedilir. Başarılı bir taslak tekrar gönderilemez; başarısız bir deneme hata bilgisiyle
-kaydedilir ve yalnızca kullanıcı yeniden onay verirse tekrar denenebilir.
+```text
+http://127.0.0.1:8000/health
+```
+
+## Başvuru Akışı
+
+Yeni bir başvuru oluştururken temel akış şu şekilde:
+
+```text
+Şirket / Pozisyon
+        ↓
+Şirket araştırması
+        ↓
+CV ve profil bilgileri
+        ↓
+Ollama ile e-posta taslağı
+        ↓
+Kullanıcı düzenlemesi
+        ↓
+Açık gönderim onayı
+        ↓
+Gmail
+        ↓
+Yanıt takibi
+        ↓
+Yanıt analizi
+        ↓
+Follow-up / durum güncellemesi
+```
+
+E-posta gönderimi tamamen kullanıcı kontrollüdür. AI kendi başına e-posta göndermez veya başvuru durumunu değiştirmez.
+
+## Yanıt Takibi
+
+Gönderilen bir başvurunun Gmail message/thread bilgileri veritabanında tutulur.
+
+Kullanıcı yanıt kontrolü yaptığında uygulama yalnızca ilgili Gmail konuşmasını kontrol eder.
+
+Yeni bir yanıt bulunduğunda:
+
+- Gönderen
+- Konu
+- Yanıt zamanı
+- Yanıt sayısı
+
+gibi bilgiler kaydedilir.
+
+Yanıtın tam içeriği SQLite veritabanında tutulmaz. Kullanıcı istediğinde Gmail üzerinden okunur.
+
+Yanıt Ollama ile analiz edilerek örneğin:
+
+- olumlu dönüş
+- mülakat
+- ret
+- ek bilgi talebi
+- otomatik yanıt
+- nötr/belirsiz
+
+şeklinde sınıflandırılabilir.
+
+Bu analiz yalnızca öneridir. Başvuru durumu kullanıcı onayı olmadan değiştirilmez.
+
+## Follow-up
+
+Yanıt gelmeyen başvurular için belirlenen süre sonunda follow-up oluşturulabilir.
+
+Follow-up gönderilmeden önce uygulama tekrar Gmail konuşmasını kontrol eder. Bu sırada yeni bir yanıt geldiyse gönderim iptal edilir.
+
+Follow-up:
+
+- aynı Gmail thread'i üzerinden gönderilir
+- kullanıcı tarafından düzenlenebilir
+- açık kullanıcı onayı gerektirir
+- maksimum takip sayısıyla sınırlandırılabilir
+- başvuru bazında kapatılabilir
+
+## Durum Geçmişi
+
+Başvuruların durum değişiklikleri ayrı bir geçmiş tablosunda tutulur.
+
+Örnek:
+
+```text
+Taslak
+  ↓
+Gönderildi
+  ↓
+Yanıt Geldi
+  ↓
+Mülakat
+```
+
+Geçmiş kayıtları sonradan değiştirilmez veya silinmez.
+
+Kullanıcı bir durumu düzelttiğinde eski kayıt silinmek yerine yeni bir düzeltme kaydı oluşturulur.
+
+Bu geçmiş aynı zamanda başvuru analizlerinde kullanılır.
+
+## Başvuru Analizi
+
+Dashboard üzerinde temel başvuru istatistikleri gösterilir:
+
+- Toplam başvuru
+- Gönderilen
+- Yanıtlanan
+- Mülakat
+- Ret
+- Teklif
+- Yanıt oranı
+- Başvurudan mülakata dönüşüm
+- Yanıttan mülakata dönüşüm
+- Mülakattan teklife dönüşüm
+- Ortalama yanıt süresi
+- Ortalama mülakata ulaşma süresi
+- Yanıt bekleyen başvurular
+- Follow-up gereken başvurular
+
+Eski kayıtların tamamında gerçek durum geçiş zamanları bulunmadığı için bazı süre analizleri yalnızca yeterli geçmiş verisi olan başvurularda hesaplanır.
+
+## Veri Güvenliği
+
+Kişisel veriler yerel olarak tutulur.
+
+Git tarafından takip edilmeyen başlıca dosyalar:
+
+```text
+.env
+credentials/
+data/job_outreach.db
+data/uploads/
+.venv/
+```
+
+Gmail gönderiminden önce backend:
+
+- taslağı
+- alıcıyı
+- konuyu
+- e-posta metnini
+- aktif CV'yi
+- Gmail bağlantısını
+- kullanıcı onayını
+
+tekrar doğrular.
+
+Gönderilmiş bir taslak tekrar gönderilemez.
+
+Follow-up gönderiminde de gönderimden hemen önce yeni Gmail yanıtı olup olmadığı tekrar kontrol edilir.
+
+## Testler
+
+Projede backend ve kritik kullanıcı akışları için otomatik testler bulunuyor.
+
+Şu an test paketi:
+
+```text
+127 test
+```
+
+Testlerde gerçek Gmail gönderimi veya gerçek Gmail okuması yapılmaz. Gmail ve diğer dış servisler mock edilerek test edilir.
+
+Ayrıca geliştirme sırasında SQLite için:
+
+```sql
+PRAGMA integrity_check;
+```
+
+kontrolü kullanılıyor.
+
+## Projenin Durumu
+
+Proje şu anda aktif olarak geliştirdiğim kişisel bir çalışma.
+
+Şu ana kadar ağırlıklı olarak:
+
+- REST API yapısı
+- frontend/backend ayrımı
+- SQLite ve transaction yönetimi
+- OAuth 2.0
+- Gmail API
+- yerel LLM entegrasyonu
+- durum geçmişi
+- güvenli follow-up akışı
+- test/mocking
+- temel uygulama analitiği
+
+konularında pratik yapmak için geliştirdim.
+
+İlerleyen aşamalarda hata yönetimi, logging, configuration yönetimi ve genel production güvenilirliği üzerinde çalışmayı planlıyorum.
