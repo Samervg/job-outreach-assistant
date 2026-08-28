@@ -28,6 +28,7 @@ from backend.services.follow_up import (
     evaluate_follow_up,
     generate_follow_up,
 )
+from backend.services.application_analytics import calculate_application_analytics
 from backend.services.reply_intelligence import (
     SUGGESTED_STATUSES,
     ReplyAnalysisError,
@@ -152,6 +153,44 @@ class FollowUpSendRequest(BaseModel):
         return value.strip()
 
 
+class AnalyticsCounts(BaseModel):
+    total: int
+    draft: int
+    sent: int
+    replied: int
+    interview_reached: int
+    rejected: int
+    failed: int
+    offer_reached: int
+    waiting_for_reply: int
+    follow_up_due: int
+
+
+class AnalyticsRates(BaseModel):
+    reply_rate: float | None
+    reply_to_interview_rate: float | None
+    application_to_interview_rate: float | None
+    interview_to_offer_rate: float | None
+
+
+class AnalyticsTiming(BaseModel):
+    average_reply_time_hours: float | None
+    median_reply_time_hours: float | None
+    average_time_to_interview_hours: float | None
+
+
+class AnalyticsDataQuality(BaseModel):
+    applications_with_full_history: int
+    baseline_only_migrated_records: int
+
+
+class ApplicationAnalyticsResponse(BaseModel):
+    counts: AnalyticsCounts
+    rates: AnalyticsRates
+    timing: AnalyticsTiming
+    data_quality: AnalyticsDataQuality
+
+
 def _get_application(application_id: int) -> sqlite3.Row:
     with get_connection() as connection:
         row = connection.execute(
@@ -268,6 +307,13 @@ def list_applications(
     with get_connection() as connection:
         rows = connection.execute(query, parameters).fetchall()
     return [_row_to_draft(row) for row in rows]
+
+
+@router.get("/analytics/summary", response_model=ApplicationAnalyticsResponse)
+def get_application_analytics() -> ApplicationAnalyticsResponse:
+    with get_connection() as connection:
+        analytics = calculate_application_analytics(connection)
+    return ApplicationAnalyticsResponse(**analytics)
 
 
 @router.get("/{application_id}", response_model=DraftResponse)

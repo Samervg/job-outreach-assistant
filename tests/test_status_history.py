@@ -214,6 +214,31 @@ class ApplicationsHistoryPageTests(unittest.TestCase):
                 api_client, "get_application_history", return_value=(history, None)
             ), patch.object(
                 api_client,
+                "get_application_analytics",
+                return_value=({
+                    "counts": {
+                        "total": 1, "draft": 1, "sent": 0, "replied": 0,
+                        "interview_reached": 0, "rejected": 0, "failed": 0,
+                        "offer_reached": 0, "waiting_for_reply": 0,
+                        "follow_up_due": 0,
+                    },
+                    "rates": {
+                        "reply_rate": None, "reply_to_interview_rate": None,
+                        "application_to_interview_rate": None,
+                        "interview_to_offer_rate": None,
+                    },
+                    "timing": {
+                        "average_reply_time_hours": None,
+                        "median_reply_time_hours": None,
+                        "average_time_to_interview_hours": None,
+                    },
+                    "data_quality": {
+                        "applications_with_full_history": 1,
+                        "baseline_only_migrated_records": 0,
+                    },
+                }, None),
+            ), patch.object(
+                api_client,
                 "get_follow_up_eligibility",
                 return_value=({
                     "eligible": False,

@@ -1,11 +1,17 @@
 import streamlit as st
 
-from application_state import application_metrics, should_show_ai_approval
+from application_state import (
+    application_metrics,
+    format_duration_hours,
+    format_percentage,
+    should_show_ai_approval,
+)
 from api_client import (
     analyze_application_reply,
     decide_reply_analysis,
     generate_follow_up_draft,
     get_application,
+    get_application_analytics,
     get_application_history,
     get_application_reply_content,
     get_follow_up_eligibility,
@@ -103,6 +109,66 @@ second_metrics = st.columns(3)
 second_metrics[0].metric("Mülakat", counts["interview"])
 second_metrics[1].metric("Olumsuz", counts["rejected"])
 second_metrics[2].metric("Teklif", counts["offer"])
+
+analytics, analytics_error = get_application_analytics()
+st.subheader("Başvuru Analizi")
+if analytics_error:
+    st.warning(analytics_error)
+else:
+    analytics_counts = analytics["counts"]
+    analytics_rates = analytics["rates"]
+    analytics_timing = analytics["timing"]
+    with st.container(horizontal=True):
+        st.metric(
+            "Yanıt oranı",
+            format_percentage(analytics_rates["reply_rate"]),
+            border=True,
+        )
+        st.metric(
+            "Yanıttan mülakata",
+            format_percentage(analytics_rates["reply_to_interview_rate"]),
+            border=True,
+        )
+        st.metric(
+            "Başvurudan mülakata",
+            format_percentage(analytics_rates["application_to_interview_rate"]),
+            border=True,
+        )
+        st.metric(
+            "Mülakattan teklife",
+            format_percentage(analytics_rates["interview_to_offer_rate"]),
+            border=True,
+        )
+    with st.container(horizontal=True):
+        st.metric(
+            "Ortalama yanıt süresi",
+            format_duration_hours(analytics_timing["average_reply_time_hours"]),
+            border=True,
+        )
+        st.metric(
+            "Ortalama mülakata ulaşma",
+            format_duration_hours(
+                analytics_timing["average_time_to_interview_hours"]
+            ),
+            border=True,
+        )
+        st.metric(
+            "Cevap bekleyen",
+            analytics_counts["waiting_for_reply"],
+            border=True,
+        )
+        st.metric(
+            "Follow-up gereken",
+            analytics_counts["follow_up_due"],
+            border=True,
+        )
+    quality = analytics["data_quality"]
+    if quality["baseline_only_migrated_records"]:
+        st.caption(
+            "Geçmiş takibi sonradan eklenen "
+            f"{quality['baseline_only_migrated_records']} kayıt konservatif olarak "
+            "değerlendirildi. Tarihsel analizler yeni geçişlerle daha kesin hale gelir."
+        )
 
 selected_filter = st.segmented_control(
     "Duruma göre filtrele",

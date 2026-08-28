@@ -321,6 +321,18 @@ def list_applications(
         return None, "Başvurular backend'den alınamadı."
 
 
+def get_application_analytics() -> tuple[dict | None, str | None]:
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/applications/analytics/summary", timeout=10
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Başvuru analizi backend'den alınamadı."
+
+
 def get_application(application_id: int) -> tuple[dict | None, str | None]:
     try:
         response = requests.get(
