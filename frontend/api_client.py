@@ -345,6 +345,18 @@ def get_application(application_id: int) -> tuple[dict | None, str | None]:
         return None, "Başvuru backend'den alınamadı."
 
 
+def delete_application(application_id: int) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.delete(
+            f"{BACKEND_URL}/applications/{application_id}", timeout=10
+        )
+        if not response.ok:
+            return None, _error_message(response)
+        return response.json(), None
+    except (requests.RequestException, ValueError):
+        return None, "Başvuru silinirken backend bağlantısı başarısız oldu."
+
+
 def get_application_history(
     application_id: int,
 ) -> tuple[list[dict] | None, str | None]:

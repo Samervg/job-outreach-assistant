@@ -251,7 +251,8 @@ class ApplicationsHistoryPageTests(unittest.TestCase):
                     str(frontend / "app_pages" / "applications.py")
                 ).run(timeout=20)
             self.assertEqual(len(app.exception), 0)
-            self.assertIn("Durum Geçmişi", [item.label for item in app.expander])
+            self.assertIn("Geçmiş", [item.label for item in app.tabs])
+            self.assertIn("Başvuruyu sil", [item.label for item in app.button])
         finally:
             os.chdir(previous_directory)
             sys.path.remove(str(frontend))

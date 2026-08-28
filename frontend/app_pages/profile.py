@@ -1,9 +1,14 @@
 import streamlit as st
 
 from api_client import analyze_cv, get_cv_analysis, get_profile, save_profile, upload_cv
+from ui import render_empty_state, render_page_header, render_section_header
 
 
-st.header("Profil")
+render_page_header(
+    "Profil ve CV",
+    "Başvurularda kullanılacak kişisel bilgilerinizi ve aktif CV'nizi yönetin.",
+    icon="person",
+)
 
 profile, profile_error = get_profile()
 if profile_error:
@@ -17,35 +22,51 @@ if profile.get("cv_file_path"):
     if analysis_state_error:
         st.warning(analysis_state_error)
 
+render_section_header(
+    "Profesyonel profil",
+    "Bu bilgiler e-posta taslaklarının kişiselleştirilmesinde kullanılır.",
+)
 with st.form("profile_form"):
-    name = st.text_input("Ad soyad", value=profile.get("name", ""))
-    target_job_title = st.text_input(
-        "Hedef pozisyon", value=profile.get("target_job_title", "")
-    )
+    st.markdown("#### Kişisel bilgiler")
+    identity_columns = st.columns(2)
+    with identity_columns[0]:
+        name = st.text_input("Ad soyad", value=profile.get("name", ""))
+    with identity_columns[1]:
+        target_job_title = st.text_input(
+            "Hedef pozisyon", value=profile.get("target_job_title", "")
+        )
+    st.markdown("#### Profesyonel özet")
     professional_summary = st.text_area(
         "Kısa profesyonel özet",
         value=profile.get("professional_summary", ""),
         height=160,
     )
-    linkedin_url = st.text_input(
-        "LinkedIn URL (opsiyonel)", value=profile.get("linkedin_url") or ""
-    )
-    github_url = st.text_input(
-        "GitHub URL (opsiyonel)", value=profile.get("github_url") or ""
-    )
+    st.markdown("#### Bağlantılar")
+    link_columns = st.columns(2)
+    with link_columns[0]:
+        linkedin_url = st.text_input(
+            "LinkedIn URL (opsiyonel)", value=profile.get("linkedin_url") or ""
+        )
+    with link_columns[1]:
+        github_url = st.text_input(
+            "GitHub URL (opsiyonel)", value=profile.get("github_url") or ""
+        )
 
+    st.markdown("##### CV yönetimi")
     current_cv_name = profile.get("cv_original_name")
     if current_cv_name:
-        st.info(f"Yüklü CV: {current_cv_name}")
+        st.write(f"**Aktif dosya:** {current_cv_name}")
         if cv_analysis_state and cv_analysis_state.get("analyzed"):
-            st.success("CV analiz edildi.")
+            st.badge("Analiz hazır", color="green", icon=":material/check_circle:")
         else:
-            st.warning("CV henüz analiz edilmedi.")
+            st.badge("Analiz bekliyor", color="orange", icon=":material/schedule:")
     else:
-        st.info("Henüz bir CV yüklenmedi.")
+        st.caption("Henüz bir CV yüklenmedi.")
 
     cv_file = st.file_uploader("CV yükle veya değiştir", type=["pdf"])
-    submitted = st.form_submit_button("Profili kaydet", type="primary")
+    submitted = st.form_submit_button(
+        "Profili kaydet", type="primary", icon=":material/save:"
+    )
 
 if submitted:
     profile_data = {
@@ -71,6 +92,10 @@ if submitted:
         st.rerun()
 
 if profile.get("cv_file_path"):
+    render_section_header(
+        "CV içgörüleri",
+        "Yerel Ollama analizi yalnızca siz başlattığınızda çalışır.",
+    )
     if st.button("CV'yi analiz et", icon=":material/document_search:"):
         with st.spinner("CV metni çıkarılıyor ve Ollama ile analiz ediliyor..."):
             cv_analysis_state, analyze_error = analyze_cv()
@@ -83,7 +108,7 @@ if profile.get("cv_file_path"):
     if cv_analysis_state and cv_analysis_state.get("analyzed"):
         analysis = cv_analysis_state.get("analysis") or {}
         with st.container(border=True):
-            st.subheader("CV analiz özeti")
+            st.markdown("#### CV analiz özeti")
 
             skills = analysis.get("skills") or []
             st.write("**Beceriler:**", ", ".join(skills) if skills else "Bulunamadı")
@@ -113,3 +138,9 @@ if profile.get("cv_file_path"):
                     st.write(f"- {item['title']} — {organization} ({item['type']})")
             else:
                 st.caption("Profesyonel veya staj deneyimi bulunamadı.")
+elif not profile:
+    render_empty_state(
+        "Profilinizi tamamlayın",
+        "İlk kişiselleştirilmiş başvurunuzu hazırlamak için temel bilgilerinizi kaydedin.",
+        icon="person_add",
+    )

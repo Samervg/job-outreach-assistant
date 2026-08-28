@@ -1,4 +1,5 @@
 import streamlit as st
+from urllib.parse import urlparse
 
 from api_client import (
     check_company_duplicates,
@@ -17,12 +18,20 @@ from company_import_state import (
     current_company_import_preview,
     store_company_import_preview,
 )
+from ui import render_empty_state, render_page_header, render_section_header, render_step
 
 
-st.header("Şirketler")
-st.caption("İletişime geçmek istediğiniz şirketleri manuel olarak yönetin.")
+render_page_header(
+    "Şirketler",
+    "Hedef şirketleri, pozisyonları ve başvuru araştırmalarını tek yerde yönetin.",
+    icon="domain",
+)
 
-st.subheader("Website'den şirket ekle")
+render_section_header(
+    "Web sitesinden şirket ekle",
+    "Kamuya açık sayfaları tarayın, bulunan bilgileri doğrulayın ve açık onayla kaydedin.",
+)
+render_step(1, "Web sitesini tara", "Şirketin ana sayfa veya kariyer sayfası URL'sini girin.")
 with st.form("company_import_scan_form"):
     import_website = st.text_input(
         "Şirket web sitesi",
@@ -61,6 +70,7 @@ if preview:
     positions = preview.get("open_positions") or []
     position_titles = [position["title"] for position in positions]
     with st.container(border=True):
+        render_step(2, "Önizlemeyi doğrula", "Bulunan şirket ve pozisyon bilgilerini kontrol edin.")
         st.caption(
             f"{len(preview.get('source_pages') or [])} herkese açık sayfa incelendi. "
             "Henüz hiçbir şirket kaydedilmedi."
@@ -112,7 +122,7 @@ if preview:
                 f"Açık pozisyon: {len(positions)}"
             )
             import_save_submitted = st.form_submit_button(
-                "Şirketi kaydet", type="primary"
+                "Şirketi kaydet", type="primary", icon=":material/save:"
             )
 
     if import_save_submitted:
@@ -155,6 +165,7 @@ if pending_import:
         company["id"]: company for company in pending_import["duplicates"]
     }
     with st.container(border=True):
+        render_step(3, "Tekrar kaydı kontrol et", "Mevcut kayıt otomatik değiştirilmez.")
         st.warning("Olası tekrar kayıt bulundu; otomatik değişiklik yapılmadı.")
         duplicate_id = st.selectbox(
             "Mevcut şirket",
@@ -182,15 +193,19 @@ if pending_import:
         st.info("İçe aktarma iptal edildi; hiçbir kayıt değiştirilmedi.")
         st.rerun()
 
-st.divider()
-
-with st.form("new_company_form", clear_on_submit=True):
-    st.subheader("Yeni şirket ekle")
-    new_name = st.text_input("Şirket adı")
-    new_website = st.text_input("Web sitesi (opsiyonel)")
-    new_contact_email = st.text_input("İletişim e-postası")
-    new_target_position = st.text_input("Hedef pozisyon")
-    create_submitted = st.form_submit_button("Şirketi kaydet", type="primary")
+with st.expander("Şirketi manuel ekle", icon=":material/add_business:"):
+    with st.form("new_company_form", clear_on_submit=True):
+        st.caption("Web sitesi taraması kullanmadan şirket ve pozisyon kaydı oluşturun.")
+        manual_columns = st.columns(2)
+        with manual_columns[0]:
+            new_name = st.text_input("Şirket adı")
+            new_contact_email = st.text_input("İletişim e-postası")
+        with manual_columns[1]:
+            new_website = st.text_input("Web sitesi (opsiyonel)")
+            new_target_position = st.text_input("Hedef pozisyon")
+        create_submitted = st.form_submit_button(
+            "Şirketi kaydet", type="primary", icon=":material/save:"
+        )
 
 if create_submitted:
     created_company, create_error = create_company(
@@ -213,24 +228,29 @@ if companies_error:
     st.stop()
 
 companies = companies or []
-st.subheader("Kayıtlı şirketler")
+render_section_header(
+    "Kayıtlı şirketler",
+    f"{len(companies)} şirket-pozisyon kaydı başvuru akışında kullanıma hazır.",
+)
 
 if not companies:
-    st.info("Henüz kayıtlı bir şirket yok.")
+    render_empty_state(
+        "Henüz şirket yok",
+        "Yukarıdaki web sitesi taraması veya manuel form ile ilk şirketinizi ekleyin.",
+        icon="domain_add",
+    )
     st.stop()
 
-st.dataframe(
-    [
-        {
-            "Şirket": company["name"],
-            "Hedef pozisyon": company["target_position"],
-            "E-posta": company["contact_email"],
-            "Web sitesi": company["website"] or "—",
-        }
-        for company in companies
-    ],
-    hide_index=True,
-)
+for company in companies:
+    with st.container(border=True):
+        card_columns = st.columns([3, 2], vertical_alignment="center")
+        with card_columns[0]:
+            st.markdown(f"**{company['name']}**")
+            st.caption(company["target_position"])
+        with card_columns[1]:
+            domain = urlparse(company.get("website") or "").hostname or "Web sitesi yok"
+            st.caption(f":material/language: {domain}")
+            st.caption(f":material/mail: {company['contact_email']}")
 
 company_by_id = {company["id"]: company for company in companies}
 selected_company_id = st.selectbox(
@@ -243,67 +263,104 @@ selected_company_id = st.selectbox(
 )
 selected_company = company_by_id[selected_company_id]
 
-st.subheader("Şirketi araştır")
-research_result, research_load_error = get_company_research(selected_company_id)
-if research_load_error:
-    st.error(research_load_error)
-elif research_result:
-    st.caption(f"Son araştırma: {research_result['updated_at']}")
-else:
-    st.caption("Bu şirket için henüz güncel araştırma yok.")
+render_section_header(
+    "Seçili şirket",
+    "Şirket bilgilerini, pozisyonu, araştırmayı ve yönetim işlemlerini birlikte inceleyin.",
+)
+company_info_tab, research_tab, management_tab = st.tabs(
+    ["Şirket ve pozisyon", "Araştırma", "Yönetim"]
+)
 
-if st.button(
-    "Şirketi araştır",
-    key=f"research_company_{selected_company_id}",
-    disabled=not bool(selected_company.get("website")),
-):
-    with st.spinner("Herkese açık şirket sayfaları inceleniyor..."):
-        research_result, research_error = research_company(selected_company_id)
-    if research_error:
-        st.error(research_error)
+with company_info_tab:
+    with st.container(border=True):
+        info_columns = st.columns(2)
+        with info_columns[0]:
+            st.markdown(f"**{selected_company['name']}**")
+            st.write(f"**Kayıtlı pozisyon:** {selected_company['target_position']}")
+        with info_columns[1]:
+            selected_domain = (
+                urlparse(selected_company.get("website") or "").hostname
+                or "Web sitesi yok"
+            )
+            st.write(f"**Domain:** {selected_domain}")
+            st.write(f"**İletişim:** {selected_company['contact_email']}")
+        if selected_company.get("website"):
+            st.link_button(
+                "Web sitesini aç",
+                selected_company["website"],
+                icon=":material/open_in_new:",
+            )
+
+with research_tab:
+    st.markdown("#### Website araştırması ve bağlam")
+    research_result, research_load_error = get_company_research(selected_company_id)
+    if research_load_error:
+        st.error(research_load_error)
+    elif research_result:
+        st.caption(f"Son araştırma: {research_result['updated_at']}")
     else:
-        st.success("Şirket araştırması kaydedildi.")
-        st.rerun()
+        st.caption("Bu şirket için henüz güncel araştırma yok.")
 
-if not selected_company.get("website"):
-    st.info("Araştırma için önce şirket web sitesini kaydedin.")
-elif research_result:
-    research = research_result["research"]
-    if research.get("summary"):
-        st.write(research["summary"])
-    if research.get("focus_areas"):
-        st.write("Odak alanları: " + ", ".join(research["focus_areas"]))
-    if research.get("products_or_services"):
-        st.write(
-            "Ürün/hizmet sinyalleri: "
-            + ", ".join(item["text"] for item in research["products_or_services"])
+    if st.button(
+        "Şirketi araştır",
+        key=f"research_company_{selected_company_id}",
+        disabled=not bool(selected_company.get("website")),
+    ):
+        with st.spinner("Herkese açık şirket sayfaları inceleniyor..."):
+            research_result, research_error = research_company(selected_company_id)
+        if research_error:
+            st.error(research_error)
+        else:
+            st.success("Şirket araştırması kaydedildi.")
+            st.rerun()
+
+    if not selected_company.get("website"):
+        st.info("Araştırma için önce şirket web sitesini kaydedin.")
+    elif research_result:
+        research = research_result["research"]
+        if research.get("summary"):
+            st.write(research["summary"])
+        if research.get("focus_areas"):
+            st.write("Odak alanları: " + ", ".join(research["focus_areas"]))
+        if research.get("products_or_services"):
+            st.write(
+                "Ürün/hizmet sinyalleri: "
+                + ", ".join(
+                    item["text"] for item in research["products_or_services"]
+                )
+            )
+        if research.get("hiring_signals"):
+            st.write(
+                "İşe alım sinyalleri: " + ", ".join(research["hiring_signals"])
+            )
+        for point in research.get("personalization_points") or []:
+            st.info(point["text"])
+            st.caption(f"Kaynak: {point['source_url']}")
+        with st.expander("Kaynak sayfalar"):
+            for source_url in research.get("source_pages") or []:
+                st.markdown(f"- [{source_url}]({source_url})")
+
+with management_tab:
+    st.markdown("#### Şirket kaydını düzenle")
+    with st.form(f"edit_company_form_{selected_company_id}"):
+        edit_name = st.text_input("Şirket adı", value=selected_company["name"])
+        edit_website = st.text_input(
+            "Web sitesi (opsiyonel)", value=selected_company["website"] or ""
         )
-    if research.get("hiring_signals"):
-        st.write("İşe alım sinyalleri: " + ", ".join(research["hiring_signals"]))
-    for point in research.get("personalization_points") or []:
-        st.info(point["text"])
-        st.caption(f"Kaynak: {point['source_url']}")
-    with st.expander("Kaynak sayfalar"):
-        for source_url in research.get("source_pages") or []:
-            st.markdown(f"- [{source_url}]({source_url})")
-
-with st.form(f"edit_company_form_{selected_company_id}"):
-    st.subheader("Seçili şirketi düzenle")
-    edit_name = st.text_input("Şirket adı", value=selected_company["name"])
-    edit_website = st.text_input(
-        "Web sitesi (opsiyonel)", value=selected_company["website"] or ""
-    )
-    edit_contact_email = st.text_input(
-        "İletişim e-postası", value=selected_company["contact_email"]
-    )
-    edit_target_position = st.text_input(
-        "Hedef pozisyon", value=selected_company["target_position"]
-    )
-    confirm_delete = st.checkbox("Bu şirketi silmek istediğimi onaylıyorum")
-
-    with st.container(horizontal=True):
-        update_submitted = st.form_submit_button("Değişiklikleri kaydet")
-        delete_submitted = st.form_submit_button("Şirketi sil")
+        edit_contact_email = st.text_input(
+            "İletişim e-postası", value=selected_company["contact_email"]
+        )
+        edit_target_position = st.text_input(
+            "Hedef pozisyon", value=selected_company["target_position"]
+        )
+        confirm_delete = st.checkbox("Bu şirketi silmek istediğimi onaylıyorum")
+        with st.container(horizontal=True):
+            update_submitted = st.form_submit_button(
+                "Değişiklikleri kaydet", type="primary", icon=":material/save:"
+            )
+            delete_submitted = st.form_submit_button(
+                "Şirketi sil", icon=":material/delete:"
+            )
 
 if update_submitted:
     updated_company, update_error = update_company(

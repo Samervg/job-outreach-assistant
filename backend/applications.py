@@ -77,6 +77,11 @@ class StatusHistoryResponse(BaseModel):
     changed_at: str
 
 
+class ApplicationDeleteResponse(BaseModel):
+    deleted: bool
+    application_id: int
+
+
 class ReplySyncResponse(BaseModel):
     has_reply: bool
     reply_count: int
@@ -319,6 +324,43 @@ def get_application_analytics() -> ApplicationAnalyticsResponse:
 @router.get("/{application_id}", response_model=DraftResponse)
 def get_application(application_id: int) -> DraftResponse:
     return _row_to_draft(_get_application(application_id))
+
+
+def _delete_outreach_row(
+    connection: sqlite3.Connection, application_id: int
+) -> None:
+    cursor = connection.execute(
+        "DELETE FROM outreach WHERE id = ?", (application_id,)
+    )
+    if cursor.rowcount != 1:
+        raise sqlite3.DatabaseError("Application row could not be deleted.")
+
+
+@router.delete("/{application_id}", response_model=ApplicationDeleteResponse)
+def delete_application(application_id: int) -> ApplicationDeleteResponse:
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute(
+            "SELECT status FROM outreach WHERE id = ?", (application_id,)
+        ).fetchone()
+        if current is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Başvuru bulunamadı.",
+            )
+        if current["status"] not in {"draft", "failed"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Yalnızca taslak veya başarısız başvurular silinebilir.",
+            )
+
+        connection.execute(
+            "DELETE FROM application_status_history WHERE application_id = ?",
+            (application_id,),
+        )
+        _delete_outreach_row(connection, application_id)
+
+    return ApplicationDeleteResponse(deleted=True, application_id=application_id)
 
 
 @router.get(
