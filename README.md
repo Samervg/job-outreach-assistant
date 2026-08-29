@@ -252,3 +252,7 @@ v1 kapsamı dışında değerlendirilebilecek kısa fikirler:
 - Daha kapsamlı entegrasyon ve gözlemlenebilirlik
 
 Bu maddeler mevcut v1 içinde uygulanmamıştır.
+
+
+iş ararken iş  aramayı kolaylaştıran bir uygulama geliştirmek de manidar oldu :D
+Also,  press f to pay respects to Emre Yavuz
