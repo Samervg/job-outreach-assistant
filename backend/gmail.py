@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 from threading import Lock
 
@@ -25,6 +26,7 @@ from backend.services.gmail_service import (
 
 router = APIRouter(tags=["gmail"])
 send_lock = Lock()
+logger = logging.getLogger(__name__)
 
 
 class GmailStatusResponse(BaseModel):
@@ -68,6 +70,7 @@ def gmail_auth_start() -> GmailAuthStartResponse:
     try:
         authorization_url = start_oauth()
     except GmailConfigurationError as error:
+        logger.warning("Gmail OAuth start failed error_type=%s", type(error).__name__)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
         ) from error
@@ -95,6 +98,10 @@ def gmail_auth_callback(
     try:
         email = complete_oauth(str(request.url), state)
     except GmailConfigurationError as callback_error:
+        logger.warning(
+            "Gmail OAuth callback failed error_type=%s",
+            type(callback_error).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(callback_error)
         ) from callback_error
@@ -228,6 +235,11 @@ def send_draft(draft_id: int, request: SendDraftRequest) -> DraftResponse:
                 cv_original_name=profile["cv_original_name"],
             )
         except (GmailNotConnectedError, GmailSendError) as error:
+            logger.error(
+                "Gmail send failed application_id=%s error_type=%s",
+                draft_id,
+                type(error).__name__,
+            )
             _mark_failed(draft_id, str(error))
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)

@@ -176,6 +176,9 @@ GMAIL_REDIRECT_URI=http://127.0.0.1:8000/gmail/auth/callback
 ALLOW_INSECURE_OAUTH_LOOPBACK=true
 
 FRONTEND_URL=http://localhost:8501
+
+LOG_LEVEL=INFO
+BACKUP_DIR=data/backups
 ```
 
 `.venv`, `.env`, SQLite veritabanı, Gmail credentials/token dosyaları ve yüklenen CV dosyaları GitHub'a gönderilmez.
@@ -219,6 +222,24 @@ Backend sağlık kontrolü:
 ```text
 http://127.0.0.1:8000/health
 ```
+
+## Veritabanı Yedeği
+
+Uygulama otomatik yedek veya geri yükleme yapmaz. İhtiyaç halinde çalışan
+SQLite veritabanının tutarlı ve zaman damgalı bir kopyasını manuel olarak
+oluşturabilirsiniz:
+
+```powershell
+python -m backend.backup
+```
+
+Yedekler varsayılan olarak `data/backups/` klasörüne yazılır. Konum
+`BACKUP_DIR` ile değiştirilebilir. Bu klasör Git tarafından takip edilmez;
+geri yükleme işlemi bilinçli olarak otomatikleştirilmemiştir.
+
+Backend log seviyesi `LOG_LEVEL` ile ayarlanabilir. Varsayılan `INFO` seviyesi
+başlangıç, veritabanı ve dış servis hata türlerini kaydeder; OAuth tokenları,
+client secret, CV/e-posta içerikleri ve Gmail yanıt gövdeleri loglanmaz.
 
 ## Başvuru Akışı
 

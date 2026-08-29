@@ -1,4 +1,5 @@
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 
@@ -23,6 +24,7 @@ from backend.services.email_generator import (
 
 
 router = APIRouter(tags=["drafts"])
+logger = logging.getLogger(__name__)
 
 
 class DraftGenerateRequest(BaseModel):
@@ -210,14 +212,17 @@ def generate_draft(request: DraftGenerateRequest) -> DraftResponse:
             profile, company, relevant_evidence, company_research
         )
     except OllamaModelUnavailableError as error:
+        logger.warning("Draft generation model unavailable company_id=%s", request.company_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
         ) from error
     except OllamaUnavailableError as error:
+        logger.warning("Draft generation Ollama unavailable company_id=%s", request.company_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
         ) from error
     except OllamaInvalidResponseError as error:
+        logger.warning("Draft generation invalid Ollama response company_id=%s", request.company_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
         ) from error

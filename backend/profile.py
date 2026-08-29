@@ -1,4 +1,5 @@
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ from backend.services.email_generator import (
 
 
 router = APIRouter(prefix="/profile", tags=["profile"])
+logger = logging.getLogger(__name__)
 
 
 class ProfileUpsert(BaseModel):
@@ -286,14 +288,17 @@ def analyze_current_cv() -> CVAnalysisResponse:
         text = extract_pdf_text(cv_path)
         analysis = analyze_cv_text(text)
     except CVParsingError as error:
+        logger.warning("CV parsing failed error_type=%s", type(error).__name__)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)
         ) from error
     except CVAnalysisError as error:
+        logger.warning("CV analysis returned invalid result error_type=%s", type(error).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
         ) from error
     except (OllamaUnavailableError, OllamaModelUnavailableError) as error:
+        logger.warning("CV analysis dependency unavailable error_type=%s", type(error).__name__)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)
         ) from error

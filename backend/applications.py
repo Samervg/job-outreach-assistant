@@ -1,4 +1,5 @@
 import sqlite3
+import logging
 from datetime import datetime, timezone
 from threading import Lock
 from typing import Literal
@@ -38,6 +39,7 @@ from backend.services.reply_intelligence import (
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 follow_up_send_lock = Lock()
+logger = logging.getLogger(__name__)
 
 ApplicationStatus = Literal[
     "draft", "sent", "failed", "replied", "interview", "rejected", "offer"
@@ -454,10 +456,12 @@ def sync_application_reply(application_id: int) -> ReplySyncResponse:
             thread_id=current["gmail_thread_id"],
         )
     except GmailNotConnectedError as error:
+        logger.warning("Reply sync Gmail disconnected application_id=%s", application_id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
         ) from error
     except GmailReadError as error:
+        logger.error("Reply sync failed application_id=%s", application_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
         ) from error
@@ -507,6 +511,7 @@ def get_application_reply_content(application_id: int) -> ReplyContentResponse:
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
         ) from error
     except GmailReadError as error:
+        logger.error("Reply content retrieval failed application_id=%s", application_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
         ) from error
@@ -540,10 +545,12 @@ def analyze_application_reply(application_id: int) -> ReplyAnalysisResponse:
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
         ) from error
     except GmailReadError as error:
+        logger.error("Reply analysis Gmail read failed application_id=%s", application_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
         ) from error
     except ReplyAnalysisError as error:
+        logger.warning("Reply analysis failed application_id=%s", application_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
         ) from error
@@ -671,6 +678,7 @@ def generate_application_follow_up(application_id: int) -> FollowUpDraftResponse
     try:
         draft = generate_follow_up(application, str(profile["name"]).strip())
     except FollowUpGenerationError as error:
+        logger.warning("Follow-up generation failed application_id=%s", application_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
         ) from error
@@ -720,6 +728,7 @@ def send_application_follow_up(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
             ) from error
         except GmailReadError as error:
+            logger.error("Follow-up pre-send reply check failed application_id=%s", application_id)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
             ) from error
@@ -745,6 +754,11 @@ def send_application_follow_up(
                 thread_id=application["gmail_thread_id"],
             )
         except (GmailNotConnectedError, GmailSendError) as error:
+            logger.error(
+                "Follow-up send failed application_id=%s error_type=%s",
+                application_id,
+                type(error).__name__,
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
             ) from error

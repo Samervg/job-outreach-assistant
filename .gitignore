@@ -40,6 +40,7 @@ client_secret*.json
 # Future local uploads
 uploads/
 data/uploads/
+data/backups/
 
 # Editor and operating system files
 .vscode/

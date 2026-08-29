@@ -1,8 +1,12 @@
 import sqlite3
+import logging
 from contextlib import contextmanager
 from collections.abc import Iterator
 
 from backend.config import DATABASE_PATH
+
+
+logger = logging.getLogger(__name__)
 
 
 def _create_outreach_table(
@@ -149,6 +153,7 @@ def get_connection() -> Iterator[sqlite3.Connection]:
 
 def initialize_database() -> None:
     """Create the database and the tables implemented so far."""
+    logger.info("Database initialization started")
     with get_connection() as connection:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA wal_autocheckpoint = 1000")
@@ -260,3 +265,4 @@ def initialize_database() -> None:
             ) VALUES (1, 1, 7, 1, datetime('now'))
             """
         )
+    logger.info("Database initialization completed")

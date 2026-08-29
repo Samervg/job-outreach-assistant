@@ -1,6 +1,7 @@
 import sqlite3
 import re
 import json
+import logging
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -16,6 +17,7 @@ from backend.services.company_research import (
 
 
 router = APIRouter(prefix="/companies", tags=["companies"])
+logger = logging.getLogger(__name__)
 
 
 class CompanyUpsert(BaseModel):
@@ -200,6 +202,9 @@ def import_preview(request: CompanyImportRequest) -> CompanyImportPreview:
     try:
         preview = import_company_preview(request.website)
     except CompanyImportError as error:
+        logger.warning(
+            "Company website import failed error_type=%s", type(error).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
         ) from error
@@ -303,6 +308,11 @@ def research_company(company_id: int) -> CompanyResearchResponse:
             research_company_website(website)
         )
     except CompanyResearchError as error:
+        logger.warning(
+            "Company research failed company_id=%s error_type=%s",
+            company_id,
+            type(error).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
         ) from error
